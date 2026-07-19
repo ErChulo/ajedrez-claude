@@ -143,12 +143,20 @@ export class Board3D {
 
   mount(theme: ThemeData): void {
     this.theme = theme;
-    const width = this.host.clientWidth || 800;
-    const height = this.host.clientHeight || 600;
+    // Always render the 3D board as a perfect 1:1 square. The host
+    // .board-3d-host has `aspect-ratio: 1/1` (see style.css), but on
+    // first mount the layout may not have settled yet (e.g. chrome
+    // bar collapse on iOS). Taking min(w,h) when sizing the drawing
+    // buffer AND updateStyle=true ensures the canvas's CSS width/height
+    // track the host — without updateStyle, browsers leave the canvas
+    // at its default 300x150 CSS size regardless of the drawing buffer.
+    const rawW = this.host.clientWidth || 800;
+    const rawH = this.host.clientHeight || 600;
+    const size = Math.max(1, Math.min(rawW, rawH));
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(width, height, false);
+    this.renderer.setSize(size, size, true);
     setupRenderer(this.renderer);
     this.host.appendChild(this.renderer.domElement);
 
@@ -563,7 +571,7 @@ export class Board3D {
     if (!this.renderer || !this.camera) return;
     const w = this.host.clientWidth || 800;
     const h = this.host.clientHeight || 800;
-    // v1.15: ALWAYS render the 3D board as a perfect 1:1 square. The
+    // v1.17: ALWAYS render the 3D board as a perfect 1:1 square. The
     // .board-3d-host CSS rule has `aspect-ratio: 1/1`, which makes the
     // host box square on every layout — but if a parent layout edge
     // case (e.g. an iOS URL bar transition rounding error) ever
@@ -572,10 +580,22 @@ export class Board3D {
     // guarantees a square canvas AND guarantees we never overflow
     // either dimension. camera.aspect=1 then keeps the projection
     // matrix in lockstep with the renderer.
+    //
+    // updateStyle=true now also resizes the canvas's CSS dimensions
+    // (without it, browsers leave the canvas at its default 300x150
+    // CSS box while the drawing buffer is the requested `size` — the
+    // board appears tiny and pinned to the upper-left). Combined with
+    // the CSS rule `.board-3d-host canvas { width: 100%; height: 100% }`
+    // in style.css this is belt-and-suspenders: even if a future
+    // refactor drops updateStyle, the canvas still fills the host.
     const size = Math.max(1, Math.min(w, h));
-    this.renderer.setSize(size, size, false);
+    this.renderer.setSize(size, size, true);
     this.camera.aspect = 1;
     this.camera.updateProjectionMatrix();
+    // Refresh pixel ratio in case the window moved between displays
+    // with different DPRs (dragging a browser window from a MacBook
+    // screen onto an external 4K monitor triggers this on macOS).
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   }
 
   // ---- v1.13: pointer / raycaster click chain ----

@@ -501,7 +501,16 @@ select {
   border-radius: 8px;
   overflow: hidden;
 }
-.board-3d-host canvas { display: block; }
+/* Belt-and-suspenders: even when Board3D passes updateStyle=false
+   to setSize (e.g. for a future refactor), the canvas is forced to
+   fill the host container via CSS. Combined with the JS-side
+   updateStyle=true in mount() + handleResize(), this guarantees the
+   3D view tracks the responsive host at any viewport. */
+.board-3d-host canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
 
 /* Loading splash */
 .splash {
