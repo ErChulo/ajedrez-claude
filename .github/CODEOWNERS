@@ -1,0 +1,27 @@
+# CODEOWNERS — pin review requirements for sensitive files.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Security-critical
+/src/net/rls.sql       @erchulo
+/src/net/schema.sql    @erchulo
+
+# Dev workflow
+/AGENTS.md             @erchulo
+/.husky/               @erchulo
+/.github/workflows/    @erchulo
+/playwright.config.ts  @erchulo
+/e2e/                  @erchulo
+
+# Game logic (default: any maintainer)
+/src/engine/           @erchulo
+/src/game/             @erchulo
+/src/board2d/          @erchulo
+/src/board3d/          @erchulo
+/src/clock/            @erchulo
+/src/ai/               @erchulo
+/src/themes/           @erchulo
+
+# No blanket catch-all: keeping @erchulo on every PR would defeat the
+# purpose of CODEOWNERS (no one else could ever merge). Sensitive paths
+# above require review; everything else flows through the repo's normal
+# branch protection rules.

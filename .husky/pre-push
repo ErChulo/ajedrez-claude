@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Pre-push gate: typecheck + unit tests before code can leave the dev's machine.
+set -e
+npm run typecheck
+npm run test:unit

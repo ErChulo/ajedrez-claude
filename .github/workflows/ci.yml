@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel duplicates from the same PR — saves CI minutes on rapid pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-unit:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
+
+  e2e:
+    name: Playwright (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    needs: typecheck-and-unit
+    timeout-minutes: 12
+    # Each browser job gets its own port so the matrix runs truly in parallel
+    # without one project's preview holding another. fail-fast=false keeps the
+    # other browsers running even after the first one fails — useful when
+    # diagnosing whether a regression is browser-specific.
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - { name: chromium, port: 4173 }
+          - { name: firefox,  port: 4174 }
+          - { name: webkit,   port: 4175 }
+    env:
+      CI: "true"
+      BASE_URL: http://localhost:${{ matrix.browser.port }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser.name }}
+      - name: Build
+        run: npm run build
+      - name: Start preview (background, survives shell exit)
+        # `nohup … &` detaches from the step's shell so `vite preview` keeps
+        # running when GHA moves on to the next step (each `run:` gets a fresh
+        # shell that would otherwise SIGHUP a plain `&`-ed child).
+        run: |
+          nohup npx vite preview --port ${{ matrix.browser.port }} --host 127.0.0.1 \
+            > /tmp/preview.log 2>&1 &
+          echo $! > /tmp/preview.pid
+      - name: Wait for preview server
+        run: npx wait-on http://localhost:${{ matrix.browser.port }} --timeout 30000
+      - name: Run e2e for this browser
+        run: npx playwright test --project=${{ matrix.browser.name }}
+      - name: Stop preview server
+        if: always()
+        run: kill "$(cat /tmp/preview.pid)" 2>/dev/null || true
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser.name }}
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Auto-installed by husky on `npm install`. Runs lint-staged on staged files.
+set -e
+npx lint-staged

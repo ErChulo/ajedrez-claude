@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-ssr/
+.env
+.env.local
+.env.*.local
+.vercel/
+*.log
+.DS_Store
+.vscode/
+.idea/
+coverage/
+.cache/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
