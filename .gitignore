@@ -18,3 +18,7 @@ coverage/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Local dev-probe / temp scripts (not part of the project)
+/.tmp-*.mjs
+/.probe.mjs
