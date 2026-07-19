@@ -154,11 +154,54 @@ export class Board3D {
     const rawH = this.host.clientHeight || 600;
     const size = Math.max(1, Math.min(rawW, rawH));
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(size, size, true);
-    setupRenderer(this.renderer);
-    this.host.appendChild(this.renderer.domElement);
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setSize(size, size, true);
+      setupRenderer(this.renderer);
+      this.host.appendChild(this.renderer.domElement);
+      // v1.18: tag the host so smoke.spec.ts can wait for either the
+      // canvas OR a WebGL-fallback marker — see the `else` branch below
+      // for why the fallback exists at all.
+      this.host.setAttribute("data-3d-state", "webgl");
+    } catch (e) {
+      // v1.18: WebGL is unavailable in this browser / GPU context. This
+      // happens for example on headless Firefox on Ubuntu CI, where
+      // SwiftShader-based CPU WebGL can fail to create a context inside
+      // the headless-window initialisation timing budget. Without a
+      // fallback, the user (or CI) sees a blank .board-3d-host with
+      // NO canvas, which is worse than a graceful "3D mode unavailable"
+      // message. The fallback DOM marker is checked by smoke.spec.ts
+      // as an alternative success signal.
+      console.warn("[Board3D] WebGL unavailable, mounting 3D-fallback banner:", e);
+      const banner = document.createElement("div");
+      banner.className = "three-fallback";
+      banner.dataset.state = "webgl-unavailable";
+      banner.textContent = "3D mode unavailable in this browser environment";
+      banner.style.position = "absolute";
+      banner.style.inset = "0";
+      banner.style.display = "flex";
+      banner.style.alignItems = "center";
+      banner.style.justifyContent = "center";
+      banner.style.padding = "16px";
+      banner.style.textAlign = "center";
+      banner.style.color = "var(--text-dim)";
+      banner.style.fontSize = "0.9em";
+      banner.style.background = "var(--panel)";
+      this.host.appendChild(banner);
+      this.host.setAttribute("data-3d-state", "webgl-unavailable");
+      // v1.18: tell App.ts we want to auto-flip back to 2D so the user
+      // sees a playable board instead of a stuck 3D-mode fallback
+      // banner. The event name is namespaced (`ajedrez:…`) so external
+      // tooling can't accidentally collide with it. App.ts listens
+      // once at app-mount time and clicks the 2D topbar toggle.
+      document.dispatchEvent(new CustomEvent("ajedrez:webgl-fallback"));
+      // Early return so the rest of mount() (scene/camera/controls/
+      // buildBoard/startLoop/listeners/resizeObs) only runs on the
+      // WebGL success path. TS narrows `this.renderer` from optional
+      // to defined after the early return in catch.
+      return;
+    }
 
     this.scene = new THREE.Scene();
     setupLighting(this.scene, this.renderer);

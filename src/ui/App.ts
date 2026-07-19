@@ -510,6 +510,18 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   hookView(view);
   rafHandle = requestAnimationFrame(clockLoop);
 
+  // v1.18: when Board3D can't initialise WebGL (e.g. SwiftShader headless
+  // Firefox on CI, or a user machine where the GPU driver dropped), it
+  // mounts an in-place fallback banner and dispatches this namespaced
+  // event. Programmatic-flip the render toggle back to 2D so the user
+  // ends up on a playable board instead of a stuck-3D-mode banner.
+  // One-time listener: mountApp runs once per page load.
+  document.addEventListener("ajedrez:webgl-fallback", () => {
+    const btn = Array.from(appbar.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "2D");
+    if (btn) btn.click();
+  });
+
   // Eagerly probe the AI engine so the badge is honest on first paint.
   try {
     aiAdapter = await createAI();
