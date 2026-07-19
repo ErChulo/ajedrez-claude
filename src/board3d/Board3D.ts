@@ -16,9 +16,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import gsap from "gsap";
 import { setupLighting, setupRenderer } from "./lighting";
 import { buildPieceMaterial, buildBoardMaterial } from "./materials";
-import { buildPieceGeometry, prefetchStauntonGeometries } from "./piece-styles";
+import { buildPieceGeometry, prefetchPieceStyleAssets } from "./piece-styles";
 import { DEFAULT_PIECE_STYLE, PIECE_STYLE_IDS, type PieceStyleId } from "@/types";
-import type { MoveRecord, PieceSymbol, Side, Square, ThemeData } from "@/types";
+import type { ApplyMoveInput, MoveRecord, PieceSymbol, Side, Square, ThemeData } from "@/types";
 
 const BOARD = { size: 4.0, squareSize: 0.5, height: 0.1, baseY: 0 };
 // v1.15: visual scale-up applied to every piece group (after geometry
@@ -28,7 +28,7 @@ const BOARD = { size: 4.0, squareSize: 0.5, height: 0.1, baseY: 0 };
 // visually collide. The constant is reused in animateMove's promotion
 // grow-in so the new piece settles at exactly the same final scale as
 // the other pieces (otherwise the promotion pop would visibly undershoot).
-const PIECE_VISUAL_SCALE = 1.18;
+const PIECE_VISUAL_SCALE = 1.08;
 type MoveKind = "move" | "capture" | "castle" | "enpassant" | "promote";
 type PieceKind = "p" | "n" | "b" | "r" | "q" | "k";
 type HighlightKind = "select" | "legal" | "capture" | "last" | "check";
@@ -66,7 +66,9 @@ export class Board3D {
   private frameMaterial?: THREE.Material;
   private theme: ThemeData;
   private rafHandle = 0;
+  private initTimer: number | null = null;
   private resizeObs?: ResizeObserver;
+  private disposed = false;
   private selectable: Side | null = null;
   // v1.12: piece-style registry id (matches Board2D). Drives which
   // geometry buildPieceGeometry() emits. Default "classic" matches
@@ -81,7 +83,7 @@ export class Board3D {
   // and reset to null when Game calls clearSelection or when a moveAttempt
   // fires (the move will re-set it via setLegalTargets if the move was legal).
   private selectedSq: Square | null = null;
-  private onMoveAttempt?: (from: Square, to: Square) => void;
+  private onMoveAttempt?: (input: ApplyMoveInput) => void;
   private onSelect?: (sq: Square) => void;
   private raycaster = new THREE.Raycaster();
   private pointerNDC = new THREE.Vector2();
@@ -107,27 +109,15 @@ export class Board3D {
     if (!PIECE_STYLE_IDS.includes(id)) return;
     if (this.pieceStyle === id) return;
     this.pieceStyle = id;
-    if (!this.scene || this.pieceMeshes.size === 0) return;
-    // Dispose geometries of every existing piece (materials are shared).
-    for (const [, g] of this.pieceMeshes) {
-      g.traverse((c) => {
-        const node = c as THREE.Mesh;
-        if (node.geometry) node.geometry.dispose();
-      });
-      this.scene.remove(g);
-    }
-    this.pieceMeshes.clear();
-    // Re-emit every square using the last-known board state and the
-    // new style. boardSnap was filled by redraw() so it's current.
-    for (const [sq, sym] of this.boardSnap.entries()) {
-      const group = this.makePieceMesh(sym);
-      (group.userData as { square: Square }).square = sq;
-      group.position.set(worldX(sq), BOARD.baseY + BOARD.height, worldZ(sq));
-      group.castShadow = true;
-      group.receiveShadow = true;
-      this.scene.add(group);
-      this.pieceMeshes.set(sq, group);
-    }
+    this.host.dataset.pieceStyle = id;
+    this.host.dataset.pieceAssets = id === "asset-pack" || id === "staunton" ? "loading" : "ready";
+    this.rebuildPiecesFromSnapshot();
+    void prefetchPieceStyleAssets(id).then(() => {
+      if (!this.disposed && this.pieceStyle === id) this.host.dataset.pieceAssets = "ready";
+      if (!this.disposed && this.pieceStyle === id && this.boardSnap.size > 0) {
+        this.rebuildPiecesFromSnapshot();
+      }
+    });
   }
 
   constructor(host: HTMLElement) {
@@ -142,7 +132,16 @@ export class Board3D {
   }
 
   mount(theme: ThemeData): void {
+    this.disposed = false;
     this.theme = theme;
+    const statusBanner = document.createElement("div");
+    statusBanner.className = "three-fallback";
+    statusBanner.dataset.state = "loading";
+    statusBanner.textContent = "Loading 3D board…";
+    this.host.appendChild(statusBanner);
+    this.host.setAttribute("data-3d-state", "loading");
+    this.host.dataset.pieceStyle = this.pieceStyle;
+    this.host.dataset.pieceAssets = this.pieceStyle === "asset-pack" || this.pieceStyle === "staunton" ? "loading" : "ready";
     // Always render the 3D board as a perfect 1:1 square. The host
     // .board-3d-host has `aspect-ratio: 1/1` (see style.css), but on
     // first mount the layout may not have settled yet (e.g. chrome
@@ -154,17 +153,21 @@ export class Board3D {
     const rawH = this.host.clientHeight || 600;
     const size = Math.max(1, Math.min(rawW, rawH));
 
-    try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      this.renderer.setSize(size, size, true);
-      setupRenderer(this.renderer);
-      this.host.appendChild(this.renderer.domElement);
-      // v1.18: tag the host so smoke.spec.ts can wait for either the
-      // canvas OR a WebGL-fallback marker — see the `else` branch below
-      // for why the fallback exists at all.
-      this.host.setAttribute("data-3d-state", "webgl");
-    } catch (e) {
+    this.initTimer = window.setTimeout(() => {
+      this.initTimer = null;
+      if (this.disposed) return;
+      try {
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.setSize(size, size, true);
+        setupRenderer(this.renderer);
+        this.host.appendChild(this.renderer.domElement);
+        statusBanner.remove();
+        // v1.18: tag the host so smoke.spec.ts can wait for either the
+        // canvas OR a WebGL-fallback marker — see the `else` branch below
+        // for why the fallback exists at all.
+        this.host.setAttribute("data-3d-state", "webgl");
+      } catch (e) {
       // v1.18: WebGL is unavailable in this browser / GPU context. This
       // happens for example on headless Firefox on Ubuntu CI, where
       // SwiftShader-based CPU WebGL can fail to create a context inside
@@ -174,28 +177,16 @@ export class Board3D {
       // message. The fallback DOM marker is checked by smoke.spec.ts
       // as an alternative success signal.
       console.warn("[Board3D] WebGL unavailable, mounting 3D-fallback banner:", e);
-      const banner = document.createElement("div");
-      banner.className = "three-fallback";
-      banner.dataset.state = "webgl-unavailable";
-      banner.textContent = "3D mode unavailable in this browser environment";
-      banner.style.position = "absolute";
-      banner.style.inset = "0";
-      banner.style.display = "flex";
-      banner.style.alignItems = "center";
-      banner.style.justifyContent = "center";
-      banner.style.padding = "16px";
-      banner.style.textAlign = "center";
-      banner.style.color = "var(--text-dim)";
-      banner.style.fontSize = "0.9em";
-      banner.style.background = "var(--panel)";
-      this.host.appendChild(banner);
+      statusBanner.dataset.state = "webgl-unavailable";
+      statusBanner.textContent = "3D mode unavailable in this browser environment";
+      if (!statusBanner.isConnected) this.host.appendChild(statusBanner);
       this.host.setAttribute("data-3d-state", "webgl-unavailable");
       // v1.18: tell App.ts we want to auto-flip back to 2D so the user
       // sees a playable board instead of a stuck 3D-mode fallback
       // banner. The event name is namespaced (`ajedrez:…`) so external
       // tooling can't accidentally collide with it. App.ts listens
       // once at app-mount time and clicks the 2D topbar toggle.
-      document.dispatchEvent(new CustomEvent("ajedrez:webgl-fallback"));
+      queueMicrotask(() => document.dispatchEvent(new CustomEvent("ajedrez:webgl-fallback")));
       // Early return so the rest of mount() (scene/camera/controls/
       // buildBoard/startLoop/listeners/resizeObs) only runs on the
       // WebGL success path. TS narrows `this.renderer` from optional
@@ -221,26 +212,32 @@ export class Board3D {
     // (4.5, 7.5) → (3.6, 6.0) so the board fills more of the canvas
     // vertically; combined with PIECE_VISUAL_SCALE in makePieceMesh
     // this gives a noticeably larger, more dominant 3D view.
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    this.camera.position.set(0, 3.6, 6.0);
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+    this.camera.position.set(0, 4.15, 6.75);
+    this.camera.lookAt(0, 0.12, 0);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.target.set(0, 0, 0);
-    this.controls.minDistance = 3.5;
-    this.controls.maxDistance = 14;
-    this.controls.maxPolarAngle = Math.PI / 2.1;
+    this.controls.target.set(0, 0.12, 0);
+    this.controls.minDistance = 4.6;
+    this.controls.maxDistance = 13;
+    this.controls.maxPolarAngle = Math.PI / 2.05;
 
     this.buildBoard();
+    if (this.boardSnap.size > 0) this.rebuildPiecesFromSnapshot();
     this.startLoop();
 
     // v1.13: kick off the MIT-Staunton STL pre-load so by the time a user
     // selects the "staunton" style (or redraws after switching render modes),
     // all 6 cached BufferGeometries are ready. If the user picked a different
     // style on first paint, the load still completes silently — no-op.
-    void prefetchStauntonGeometries();
+    void prefetchPieceStyleAssets(this.pieceStyle).then(() => {
+      if (!this.disposed) this.host.dataset.pieceAssets = "ready";
+      if (!this.disposed && this.boardSnap.size > 0) {
+        this.rebuildPiecesFromSnapshot();
+      }
+    });
 
     // v1.13: pointer events drive the click → select / moveAttempt chain.
     // Listen on the renderer's <canvas>, NOT this.host, so clicks bubble up
@@ -251,9 +248,15 @@ export class Board3D {
 
     this.resizeObs = new ResizeObserver(() => this.handleResize());
     this.resizeObs.observe(this.host);
+    }, 750);
   }
 
   destroy(): void {
+    this.disposed = true;
+    if (this.initTimer !== null) {
+      window.clearTimeout(this.initTimer);
+      this.initTimer = null;
+    }
     // Cancel the autohide setTimeout first so it can't fire against a
     // torn-down view's `squares` / `highlights` collections.
     if (this.hintTimer !== null) {
@@ -287,40 +290,34 @@ export class Board3D {
     for (const m of this.boardMaterials) m.dispose();
     this.frameMaterial?.dispose();
     for (const [, mesh] of this.squares) mesh.geometry.dispose();
-    for (const [, g] of this.pieceMeshes) {
-      g.traverse((c) => {
-        const node = c as THREE.Mesh;
-        if (node.geometry) node.geometry.dispose();
-        // Materials are *shared references* across the lathe + the
-        // ~16 ornaments (rook merlons, queen spikes, bishop ball,
-        // king cross beams, knight ears). They're disposed by the
-        // `for (const m of this.pieceMaterials) m.dispose()` above,
-        // which only needs to call dispose() twice (once per side)
-        // instead of ~544 (32 pieces × ~17 mesh refs). Re-introducing
-        // a per-mesh material.dispose() here would silently multiply
-        // teardown work without changing correctness — Three.js
-        // handles redundant dispose() calls but it still fires
-        // dispose events on the GPU resource manager.
-      });
-    }
+    for (const [, g] of this.pieceMeshes) this.disposePieceGroup(g);
     this.renderer?.dispose();
     this.renderer?.domElement.remove();
+    this.scene = undefined;
+    this.camera = undefined;
+    this.renderer = undefined;
   }
 
   // v1.13: select + move handlers ARE now wired for the 3D view. App.ts
   // already invokes these (defensively via `typeof anyView.setMoveAttemptHandler
   // === "function"` on the abstract ChessView).
-  setMoveAttemptHandler(fn: (from: Square, to: Square) => void): void { this.onMoveAttempt = fn; }
+  setMoveAttemptHandler(fn: (input: ApplyMoveInput) => void): void { this.onMoveAttempt = fn; }
   setSelectHandler(fn: (sq: Square) => void): void { this.onSelect = fn; }
 
   redraw(board: Record<Square, PieceSymbol | null>): void {
-    if (!this.scene) return;
-    for (const [, g] of this.pieceMeshes) this.scene.remove(g);
-    this.pieceMeshes.clear();
     // v1.12: snapshot latest board state for setPieceStyle() rebuild.
     this.boardSnap.clear();
     for (const [sq, sym] of Object.entries(board) as [Square, PieceSymbol | null][]) {
       if (!sym) continue;
+      this.boardSnap.set(sq, sym);
+    }
+    if (!this.scene) return;
+    for (const [, g] of this.pieceMeshes) {
+      this.disposePieceGroup(g);
+      this.scene.remove(g);
+    }
+    this.pieceMeshes.clear();
+    for (const [sq, sym] of this.boardSnap.entries()) {
       const group = this.makePieceMesh(sym);
       (group.userData as { square: Square }).square = sq;
       group.position.set(worldX(sq), BOARD.baseY + BOARD.height, worldZ(sq));
@@ -328,8 +325,8 @@ export class Board3D {
       group.receiveShadow = true;
       this.scene.add(group);
       this.pieceMeshes.set(sq, group);
-      this.boardSnap.set(sq, sym);
     }
+    this.updateFootprintMetric();
   }
 
   animateMove(rec: MoveRecord, kind: { kind: MoveKind }): Promise<void> {
@@ -354,30 +351,34 @@ export class Board3D {
         const replacement = this.makePieceMesh(rec.promotion ?? rec.piece);
         (replacement.userData as { square: Square }).square = rec.to;
         replacement.position.set(worldX(rec.to), BOARD.baseY + BOARD.height, worldZ(rec.to));
+        const visualScale = this.pieceStyle === "asset-pack" ? 1 : PIECE_VISUAL_SCALE;
         // v1.15: scale-up baseline matches PIECE_VISUAL_SCALE so the
         // promotion grow-in lands at the same final visual size as
         // every other piece (otherwise it would visibly undershoot).
-        replacement.scale.set(0.001 * PIECE_VISUAL_SCALE, 0.001 * PIECE_VISUAL_SCALE, 0.001 * PIECE_VISUAL_SCALE);
+        replacement.scale.set(0.001 * visualScale, 0.001 * visualScale, 0.001 * visualScale);
         this.scene.remove(group);
         this.scene.add(replacement);
         this.pieceMeshes.set(rec.to, replacement);
+        this.updateFootprintMetric();
         // AWAIT the promotion grow-in. Previously fire-and-forget, which
         // let Game.executeMove return while the new piece was still at
         // scale ~0.001 — a fast follow-up click could collide. Resolve
         // inside the tween's onComplete so Game waits for the grow.
         gsap.to(replacement.scale, {
-          x: PIECE_VISUAL_SCALE,
-          y: PIECE_VISUAL_SCALE,
-          z: PIECE_VISUAL_SCALE,
+          x: visualScale,
+          y: visualScale,
+          z: visualScale,
           duration: 0.5,
           ease: "back.out(2)",
           onComplete: () => {
             this.resolvers.delete(resolve);
+            this.updateFootprintMetric();
             resolve();
           },
         });
       } else {
         this.resolvers.delete(resolve);
+        this.updateFootprintMetric();
         resolve();
       }
     });
@@ -391,6 +392,7 @@ export class Board3D {
       mesh.position.x = worldX(to);
       mesh.position.z = worldZ(to);
       this.pieceMeshes.set(to, mesh);
+      this.updateFootprintMetric();
       resolve();
     });
   }
@@ -516,7 +518,11 @@ export class Board3D {
     if (!this.scene) return;
     const geo = new THREE.BoxGeometry(BOARD.size + 0.6, BOARD.height, BOARD.size + 0.6);
     const frameMat = new THREE.MeshPhysicalMaterial({
-      color: 0x402613, roughness: 0.7, metalness: 0.0, clearcoat: 0.1,
+      color: 0x6a3d1f,
+      roughness: 0.74,
+      metalness: 0.0,
+      clearcoat: 0.16,
+      clearcoatRoughness: 0.62,
     });
     // Frame material is tracked separately from the [white, black] piece
     // palette so a theme switch doesn't dispose the frame's still-in-use
@@ -559,13 +565,49 @@ export class Board3D {
     const material = isWhite ? this.pieceMaterials[0]! : this.pieceMaterials[1]!;
     const mesh = buildPieceGeometry(lower, sym, material, this.pieceStyle);
     group.add(mesh);
-    // v1.15: visual scale-up — see PIECE_VISUAL_SCALE at the top of
-    // this file. With 1.18× the largest piece base radius stretches
-    // from ~0.40u to ~0.47u, maxing out the 0.5u square footprint
-    // (it visibly fills more screen real estate without ever
-    // colliding with neighbour centres that sit 0.5u apart).
-    group.scale.set(PIECE_VISUAL_SCALE, PIECE_VISUAL_SCALE, PIECE_VISUAL_SCALE);
+    const visualScale = this.pieceStyle === "asset-pack" ? 1 : PIECE_VISUAL_SCALE;
+    group.scale.set(visualScale, visualScale, visualScale);
     return group;
+  }
+
+  private rebuildPiecesFromSnapshot(): void {
+    if (!this.scene) return;
+    for (const [, g] of this.pieceMeshes) {
+      this.disposePieceGroup(g);
+      this.scene.remove(g);
+    }
+    this.pieceMeshes.clear();
+    for (const [sq, sym] of this.boardSnap.entries()) {
+      const group = this.makePieceMesh(sym);
+      (group.userData as { square: Square }).square = sq;
+      group.position.set(worldX(sq), BOARD.baseY + BOARD.height, worldZ(sq));
+      group.castShadow = true;
+      group.receiveShadow = true;
+      this.scene.add(group);
+      this.pieceMeshes.set(sq, group);
+    }
+    this.updateFootprintMetric();
+  }
+
+  private updateFootprintMetric(): void {
+    let maxRatio = 0;
+    for (const [, group] of this.pieceMeshes) {
+      const box = new THREE.Box3().setFromObject(group);
+      const size = box.getSize(new THREE.Vector3());
+      maxRatio = Math.max(maxRatio, size.x / BOARD.squareSize, size.z / BOARD.squareSize);
+    }
+    this.host.dataset.maxPieceFootprintRatio = maxRatio.toFixed(3);
+  }
+
+  private disposePieceGroup(group: THREE.Group): void {
+    group.traverse((c) => {
+      const node = c as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+      node.geometry?.dispose();
+      const materials = Array.isArray(node.material) ? node.material : node.material ? [node.material] : [];
+      for (const material of materials) {
+        if (!this.pieceMaterials.includes(material)) material.dispose();
+      }
+    });
   }
 
   private highlightSquare(sq: Square, kind: HighlightKind): void {
@@ -706,7 +748,7 @@ export class Board3D {
     // Don't optimistically clear `selectedSq` here: Game.attemptMove() may
     // re-call setLegalTargets() with a new origin (reselect) or
     // clearSelection() on illegal moves. Trust Game to own the truth.
-    this.onMoveAttempt?.(from, sq);
+    this.onMoveAttempt?.({ from, to: sq });
   }
 }
 
@@ -727,4 +769,3 @@ function defaultTheme(): ThemeData {
     },
   };
 }
-

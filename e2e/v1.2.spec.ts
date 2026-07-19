@@ -167,20 +167,48 @@ test("v1.2 [5/5] undo + resign end-to-end", async ({ page }) => {
   expect(modalVisible).toBe(true);
 });
 
-test("v1.2 [6/6] white and black pieces render with distinguishably different fills AND strokes", async ({ page }) => {
+test("v1.2 [6/6] white and black pieces render with distinguishable 2D art", async ({ page }) => {
   await page.goto("/");
   await waitForProbe(page);
 
-  const readG = (square: string) => page
-    .locator(`.square[data-square="${square}"] .piece svg g`)
+  const readPiece = (square: string) => page
+    .locator(`.square[data-square="${square}"] .piece`)
     .first()
     .evaluate((el) => {
-      const cs = getComputedStyle(el);
-      return { fill: cs.fill, stroke: cs.stroke };
+      const svg = el.querySelector("svg g");
+      if (svg) {
+        const cs = getComputedStyle(svg);
+        return { kind: "svg", fill: cs.fill, stroke: cs.stroke, src: "" };
+      }
+      const img = el.querySelector("img") as HTMLImageElement | null;
+      return {
+        kind: "img",
+        fill: "",
+        stroke: "",
+        src: img?.getAttribute("src") ?? "",
+        width: img?.naturalWidth ?? 0,
+        height: img?.naturalHeight ?? 0,
+      };
     });
 
-  const { fill: whiteKindFill, stroke: whiteKindStroke } = await readG("e1");
-  const { fill: blackKindFill, stroke: blackKindStroke } = await readG("e8");
+  const whitePiece = await readPiece("e1");
+  const blackPiece = await readPiece("e8");
+
+  if (whitePiece.kind === "img" || blackPiece.kind === "img") {
+    expect(whitePiece.kind).toBe("img");
+    expect(blackPiece.kind).toBe("img");
+    expect(whitePiece.src).toContain("w_King.png");
+    expect(blackPiece.src).toContain("b_King.png");
+    expect(whitePiece.src).not.toEqual(blackPiece.src);
+    expect(whitePiece.width).toBeGreaterThan(0);
+    expect(whitePiece.height).toBeGreaterThan(0);
+    expect(blackPiece.width).toBeGreaterThan(0);
+    expect(blackPiece.height).toBeGreaterThan(0);
+    return;
+  }
+
+  const { fill: whiteKindFill, stroke: whiteKindStroke } = whitePiece;
+  const { fill: blackKindFill, stroke: blackKindStroke } = blackPiece;
   // eslint-disable-next-line no-console
   console.log(`[v1.2/colors] white king (e1) fill=${whiteKindFill} stroke=${whiteKindStroke}`);
   // eslint-disable-next-line no-console

@@ -42,8 +42,9 @@ five-minute Supabase setup.
   (both sides), en passant, promotion with picker, threefold repetition,
   fifty-move rule, insufficient material, resignation, and (not required
   by the prompt) touch-move is disabled since play is mouse-driven.
-- ✓ 2D board (SVG/CSS) and 3D board (Three.js, PBR + shadow + ACES tone
-  mapping), toggleable mid-game without losing state.
+- ✓ 2D board (PNG/SVG/CSS) and 3D board (Three.js, GLTF/STL/procedural
+  pieces, PBR + shadow + ACES tone mapping), toggleable mid-game without
+  losing state.
 - ✓ Three themes: classic wood, tournament green, dark/neon. 2D board and
   3D pieces re-color together. Persisted per browser.
 - ✓ FIDE-style clock with Bullet / Blitz / Rapid / Classical presets and
@@ -84,8 +85,8 @@ src/
   ai/engine.worker.ts      worker: bootstraps stockfish.wasm
   ai/levels.ts             skill-level → UCI mapping
   board2d/Board2D.ts       DOM/SVG board + pointer + drag/drop + tweens
-  board2d/piece-svg.ts     inline SVG glyphs
-  board3d/Board3D.ts       Three.js board (procedural Staunton)
+  board2d/piece-styles.ts  PNG/SVG piece-style registry
+  board3d/Board3D.ts       Three.js board (GLTF/STL/procedural pieces)
   board3d/materials.ts     PBR presets per theme
   board3d/lighting.ts      IBL + shadows + ACES
   anim/tween.ts            GSAP helpers (move/capture/illegal/pulse)
@@ -117,12 +118,10 @@ src/
   AI adapter. Renderers are an abstract `ChessView` interface — both
   `Board2D` and `Board3D` implement it. Switching renderers mid-game
   preserves state because the *engine* is the state, not the renderer.
-- **Procedural 3D pieces** are an explicit fallback per the asset
-  hierarchy in §3.1 of the build prompt. They use `THREE.LatheGeometry`
-  with hand-tuned profiles to give a recognizable Staunton silhouette
-  at zero asset weight. To swap in the real MIT-licensed
-  clarkerubber/Staunton-Pieces, see the "Real assets" section in
-  [NOTES.md](./NOTES.md).
+- **Asset-backed pieces with fallbacks**: the default style uses Unknuffig
+  PNGs for 2D and Sushant-Coder-01/chess3d GLTF models for 3D. The older
+  STL and procedural `THREE.LatheGeometry` styles remain selectable and serve
+  as fallbacks.
 - **No audio assets**: WebAudio generates all sounds at runtime. This
   eliminates licensing ambiguity and keeps the bundle small.
 - **Stockfish in a Worker**: the engine runs in `engine.worker.ts`, never
@@ -131,6 +130,14 @@ src/
   to bootstrap (offline build, package not installed, etc.), a
   deterministic capturer-first fallback (in `FallbackAI`) keeps the
   game playable at a degraded level.
+
+---
+
+## Asset Credits
+
+Third-party piece assets and required attribution are documented in
+[ASSET_CREDITS.md](./ASSET_CREDITS.md). Per-piece CC-BY license files are
+preserved next to the bundled 3D models under `public/assets/3d-pieces/chess3d/`.
 
 ---
 

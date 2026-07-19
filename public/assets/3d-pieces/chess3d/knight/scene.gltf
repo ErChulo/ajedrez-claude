@@ -1,0 +1,118 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Sketchfab-14.81.0",
+    "extras": {
+      "author": "Feld1 (https://sketchfab.com/Feld1)",
+      "license": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+      "source": "https://sketchfab.com/3d-models/chessknight-67df1cafffa842429edbad3be2481339",
+      "title": "ChessKnight"
+    }
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Centered_Scene",
+      "nodes": [0]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Centered_Knight",
+      "mesh": 0,
+      "translation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "rotation": [0, 0, 0, 1]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "KnightMesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 12218,
+      "type": "VEC3",
+      "min": [-0.9980267286300659, -1.0, -1.0022450685501099],
+      "max": [0.9980267286300659, 1.0000001192092896, 2.2809267044067383]
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 146616,
+      "componentType": 5126,
+      "count": 12218,
+      "type": "VEC3",
+      "min": [-1.0, -1.0, -1.0],
+      "max": [1.0, 1.0, 1.0]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 12218,
+      "type": "VEC2",
+      "min": [0.0, 0.0],
+      "max": [1.000000238418579, 1.000000238418579]
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 18792,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 75168,
+      "name": "IndexBuffer",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 97744,
+      "byteOffset": 75168,
+      "byteStride": 8,
+      "name": "TexcoordBuffer",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 293232,
+      "byteOffset": 172912,
+      "byteStride": 12,
+      "name": "VertexBuffer",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 466144,
+      "uri": "scene.bin"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "SceneMaterial",
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.6
+      }
+    }
+  ]
+}

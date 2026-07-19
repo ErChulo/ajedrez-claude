@@ -34,16 +34,19 @@ export function mountTopBar(host: HTMLElement, h: TopBarHandlers): { updateNames
   const modeGroup = mountToggleGroup(["AI", "Local", "Online"], (i) => {
     h.onMode(["ai", "local", "online"][i] as any);
   }, 0);
+  modeGroup.classList.add("mode-toggle");
   host.appendChild(modeGroup);
 
   // Render toggle (2D/3D)
   const renderGroup = mountToggleGroup(["2D", "3D"], (i) => h.onRender(i === 0 ? "2d" : "3d"), 0);
+  renderGroup.classList.add("render-toggle");
   host.appendChild(renderGroup);
 
   host.appendChild(el("div", { class: "divider" }));
 
   // Theme picker
   const themeSelect = el("select", {
+    class: "theme-select",
     onchange: (e: Event) => {
       const v = (e.currentTarget as HTMLSelectElement).value as ThemeName;
       h.onTheme(v);
@@ -58,7 +61,7 @@ export function mountTopBar(host: HTMLElement, h: TopBarHandlers): { updateNames
   host.appendChild(themeSelect);
 
   // Sound toggle
-  const soundBtn = el("button", { class: "ghost", title: "Mute / unmute" }, "🔊");
+  const soundBtn = el("button", { class: "ghost sound-toggle", title: "Mute / unmute" }, "🔊");
   let muted = false;
   soundBtn.addEventListener("click", () => {
     muted = !muted;
@@ -70,7 +73,7 @@ export function mountTopBar(host: HTMLElement, h: TopBarHandlers): { updateNames
   host.appendChild(el("div", { class: "spacer" }));
 
   // Name entries
-  const wrap = el("div", { class: "row" });
+  const wrap = el("div", { class: "row name-row" });
   const wName = el("input", { type: "text", placeholder: "White name", maxlength: 20 });
   wName.value = h.whiteName;
   wName.addEventListener("input", () => h.onNameChange("white", wName.value));
@@ -82,11 +85,11 @@ export function mountTopBar(host: HTMLElement, h: TopBarHandlers): { updateNames
   host.appendChild(wrap);
 
   // New game + resign
-  const newBtn = el("button", { class: "primary" }, "New game");
+  const newBtn = el("button", { class: "primary new-game-btn" }, "New game");
   newBtn.addEventListener("click", () => h.onNewGame());
   host.appendChild(newBtn);
 
-  const resignBtn = el("button", { class: "danger" }, "Resign");
+  const resignBtn = el("button", { class: "danger resign-btn" }, "Resign");
   resignBtn.addEventListener("click", () => h.onResign());
   host.appendChild(resignBtn);
 

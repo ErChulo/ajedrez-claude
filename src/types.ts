@@ -63,15 +63,11 @@ export type ThemeName = "wood" | "green" | "neon";
 // pipeline — the dropdown wires through to the active board view.
 // v1.13: adds "staunton" — MIT-licensed real-geometry mesh pieces
 // (Clark Rubber's Staunton-Pieces repo, /public/assets/3d-pieces/staunton/).
-export type PieceStyleId = "classic" | "bold" | "outline" | "filled" | "minimal" | "ornate" | "staunton";
-export const PIECE_STYLE_IDS: readonly PieceStyleId[] = ["classic", "bold", "outline", "filled", "minimal", "ornate", "staunton"];
-// v1.18: default to the MIT-licensed real-geometry Staunton STL set
-// (loaded from /public/assets/3d-pieces/staunton/{Kind}.stl). The
-// procedural LatheGeometry fallback ("classic") is still selectable
-// from the TopBar piece-style menu; this just changes what's painted
-// on first mount so users immediately see carved Staunton pieces
-// rather than the white-painted lathe silhouettes.
-export const DEFAULT_PIECE_STYLE: PieceStyleId = "staunton";
+// v1.19: adds "asset-pack" — user-confirmed Unknuffig 2D PNG pieces plus
+// Sushant-Coder-01/chess3d GLTF models with CC-BY attribution.
+export type PieceStyleId = "classic" | "bold" | "outline" | "filled" | "minimal" | "ornate" | "staunton" | "asset-pack";
+export const PIECE_STYLE_IDS: readonly PieceStyleId[] = ["classic", "bold", "outline", "filled", "minimal", "ornate", "staunton", "asset-pack"];
+export const DEFAULT_PIECE_STYLE: PieceStyleId = "asset-pack";
 
 export interface PieceStyleMeta {
   id: PieceStyleId;

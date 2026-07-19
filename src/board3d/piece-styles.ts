@@ -31,6 +31,7 @@
 // the same warm ivory/ebony colors look great across all six sets.
 
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import type { PieceSymbol, PieceStyleId } from "@/types";
 
@@ -56,6 +57,15 @@ const TARGET_HEIGHT_BY_KIND: Record<PieceKind, number> = {
   q: 1.20,
   k: 1.32,
 };
+const CHESS3D_TARGET_HEIGHT_BY_KIND: Record<PieceKind, number> = {
+  p: 0.38,
+  n: 0.58,
+  b: 0.62,
+  r: 0.54,
+  q: 0.72,
+  k: 0.78,
+};
+const CHESS3D_MAX_FOOTPRINT = 0.5 * 0.62;
 const STL_URL_BY_KIND: Record<PieceKind, string> = {
   p: "/assets/3d-pieces/staunton/Pawn.stl",
   n: "/assets/3d-pieces/staunton/Knight.stl",
@@ -64,14 +74,29 @@ const STL_URL_BY_KIND: Record<PieceKind, string> = {
   q: "/assets/3d-pieces/staunton/Queen.stl",
   k: "/assets/3d-pieces/staunton/King.stl",
 };
+const CHESS3D_URL_BY_KIND: Record<PieceKind, string> = {
+  p: "/assets/3d-pieces/chess3d/pawn/scene.gltf",
+  n: "/assets/3d-pieces/chess3d/knight/scene.gltf",
+  b: "/assets/3d-pieces/chess3d/bishop/scene.gltf",
+  r: "/assets/3d-pieces/chess3d/rook/scene.gltf",
+  q: "/assets/3d-pieces/chess3d/queen/scene.gltf",
+  k: "/assets/3d-pieces/chess3d/king/scene.gltf",
+};
 
 let stlLoader: STLLoader | null = null;
 function getLoader(): STLLoader {
   if (!stlLoader) stlLoader = new STLLoader();
   return stlLoader;
 }
+let gltfLoader: GLTFLoader | null = null;
+function getGltfLoader(): GLTFLoader {
+  if (!gltfLoader) gltfLoader = new GLTFLoader();
+  return gltfLoader;
+}
 const kindGeometryCache = new Map<PieceKind, THREE.BufferGeometry>();
 const kindLoadPromises = new Map<PieceKind, Promise<THREE.BufferGeometry>>();
+const chess3dGroupCache = new Map<PieceKind, THREE.Group>();
+const chess3dLoadPromises = new Map<PieceKind, Promise<THREE.Group>>();
 
 async function loadKindGeometry(kind: PieceKind): Promise<THREE.BufferGeometry> {
   const cached = kindGeometryCache.get(kind);
@@ -105,12 +130,55 @@ async function loadKindGeometry(kind: PieceKind): Promise<THREE.BufferGeometry> 
   return promise;
 }
 
+async function loadChess3dGroup(kind: PieceKind): Promise<THREE.Group> {
+  const cached = chess3dGroupCache.get(kind);
+  if (cached) return cached;
+  const inflight = chess3dLoadPromises.get(kind);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    const gltf = await getGltfLoader().loadAsync(CHESS3D_URL_BY_KIND[kind]);
+    const root = gltf.scene;
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const heightScale = size.y > 0 ? CHESS3D_TARGET_HEIGHT_BY_KIND[kind] / size.y : 1;
+    const footprint = Math.max(size.x, size.z);
+    const footprintScale = footprint > 0 ? CHESS3D_MAX_FOOTPRINT / footprint : 1;
+    root.scale.setScalar(Math.min(heightScale, footprintScale));
+    root.updateMatrixWorld(true);
+    const normalized = new THREE.Box3().setFromObject(root);
+    const center = normalized.getCenter(new THREE.Vector3());
+    root.position.x -= center.x;
+    root.position.y -= normalized.min.y;
+    root.position.z -= center.z;
+    root.updateMatrixWorld(true);
+    chess3dGroupCache.set(kind, root);
+    chess3dLoadPromises.delete(kind);
+    return root;
+  })().catch((e) => {
+    console.warn("[chess3d] failed to load", kind, e);
+    chess3dLoadPromises.delete(kind);
+    throw e;
+  });
+  chess3dLoadPromises.set(kind, promise);
+  return promise;
+}
+
 /** Eagerly loads the six MIT Staunton STLs. Resolves when ALL are done (or one fails). */
 export function prefetchStauntonGeometries(): Promise<void> {
   const kinds: PieceKind[] = ["p", "n", "b", "r", "q", "k"];
   return Promise.all(
     kinds.map((k) => loadKindGeometry(k).catch(() => undefined)),
   ).then(() => undefined);
+}
+
+export function prefetchPieceStyleAssets(styleId: PieceStyleId): Promise<void> {
+  if (styleId === "asset-pack") {
+    const kinds: PieceKind[] = ["p", "n", "b", "r", "q", "k"];
+    return Promise.all(kinds.map((k) => loadChess3dGroup(k).catch(() => undefined))).then(() => undefined);
+  }
+  if (styleId === "staunton") return prefetchStauntonGeometries();
+  return Promise.resolve();
 }
 
 function buildStauntonMesh(kind: PieceKind, sym: PieceSymbol, material: THREE.Material): THREE.Mesh {
@@ -133,6 +201,25 @@ function buildStauntonMesh(kind: PieceKind, sym: PieceSymbol, material: THREE.Ma
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+function buildChess3dModel(kind: PieceKind, sym: PieceSymbol, material: THREE.Material): THREE.Object3D | null {
+  const cached = chess3dGroupCache.get(kind);
+  if (!cached) {
+    void loadChess3dGroup(kind);
+    return null;
+  }
+  const clone = cached.clone(true);
+  clone.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.geometry = mesh.geometry.clone();
+    mesh.material = material;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    (mesh.userData as { symbol: PieceSymbol }).symbol = sym;
+  });
+  return clone;
 }
 
 type StyleCfg = {
@@ -316,6 +403,12 @@ const STYLE_CFG: Record<PieceStyleId, StyleCfg> = {
   // failure that the prefetch doesn't catch) renders a sensible
   // recognizable set instead of throwing.
   staunton: {
+    latheSegments: 48,
+    ornaments: { ...FUlL_ORNAMENTS },
+    ornamentScale: 1.0,
+    edgeOverlay: false,
+  },
+  "asset-pack": {
     latheSegments: 48,
     ornaments: { ...FUlL_ORNAMENTS },
     ornamentScale: 1.0,
@@ -534,7 +627,11 @@ function applyOrnaments(host: THREE.Mesh, kind: PieceKind, sym: PieceSymbol, mat
 
 // ---- Public builder ----
 
-export function buildPieceGeometry(kind: PieceKind, sym: PieceSymbol, material: THREE.Material, styleId: PieceStyleId): THREE.Mesh {
+export function buildPieceGeometry(kind: PieceKind, sym: PieceSymbol, material: THREE.Material, styleId: PieceStyleId): THREE.Object3D {
+  if (styleId === "asset-pack") {
+    const model = buildChess3dModel(kind, sym, material);
+    if (model) return model;
+  }
   // v1.13: "staunton" dispatches to MIT-licensed real-geometry mesh.
   // Falls back to procedural classic if cache hasn't loaded yet — the cache
   // pre-loads at Board3D.mount() so this branch is rarely hit in practice.

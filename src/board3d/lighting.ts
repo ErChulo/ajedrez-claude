@@ -24,8 +24,8 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
   // v1.15: intensity 2.2 → 2.6 so the top side of each piece carries a
   // brighter highlight rib (helps white pieces separate from light squares
   // without needing a stronger emissive, which would look painted).
-  const key = new THREE.DirectionalLight(0xffffff, 2.6);
-  key.position.set(6, 12, 6);
+  const key = new THREE.DirectionalLight(0xfff0d0, 2.15);
+  key.position.set(5, 10, 6);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 0.5;
@@ -46,7 +46,7 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
   // key still has identifiable shading instead of falling into the dark
   // side of the rim light. Boost is small to avoid over-flattening the
   // piece profile.
-  const fill = new THREE.DirectionalLight(0xc8d4ff, 0.6);
+  const fill = new THREE.DirectionalLight(0xd9e4ff, 0.48);
   fill.position.set(-6, 5, -4);
   scene.add(fill);
 
@@ -59,22 +59,19 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
   // than a competing highlight, and warmer than the fill (0xffe9c2 vs
   // 0xc8d4ff) so the rim reads as sunlight glancing off the back edge
   // rather than another cool fill source.
-  const rim = new THREE.DirectionalLight(0xffe9c2, 1.1);
+  const rim = new THREE.DirectionalLight(0xffdfb0, 0.72);
   rim.position.set(0, 6, -10);
   scene.add(rim);
 
-  // Subtle ambient just to make sure shadows aren't fully black.
-  // v1.15: 0.05 → 0.08 — very small bump to prevent the rim-light's
-  // shaded half from going fully dark on dark-skin pieces without a
-  // per-piece emissive lift.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.08));
+  scene.add(new THREE.HemisphereLight(0xfff5dc, 0x2c1a10, 0.32));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.05));
 }
 
 export function setupRenderer(renderer: THREE.WebGLRenderer): void {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.96;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 }
 

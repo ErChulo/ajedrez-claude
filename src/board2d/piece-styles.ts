@@ -37,11 +37,8 @@ export const PIECE_STYLE_META: Record<PieceStyleId, PieceStyleMeta> = {
   filled:   { id: "filled",   name: "Filled Silhouette",    blurb: "Stroke removed, pure silhouette with shadow." },
   minimal:  { id: "minimal",  name: "Minimal Modern",       blurb: "Hairline stroke, soft shadow — sleek modern." },
   ornate:   { id: "ornate",   name: "Ornate Carved",        blurb: "Classic + outer halo, pewter-carved look." },
-  // v1.13: in 2D we use the Cburnett path (it IS FIDE Staunton) by reusing
-  // the classic envelope. The 3D view, however, loads real MIT-licensed
-  // STL geometry for a much more photographed feel — so the dropdown labels
-  // it the same "Staunton Marble" but its meaning is view-specific.
-  staunton: { id: "staunton", name: "Staunton Marble",      blurb: "Real MIT-licensed Staunton geometry (3D only — 2D falls back to Classic)." },
+  staunton: { id: "staunton", name: "Neo Staunton",         blurb: "Original chess.com-inspired flat Staunton silhouettes." },
+  "asset-pack": { id: "asset-pack", name: "Unknuffig / Chess3D", blurb: "Unknuffig 2D PNGs plus Chess3D GLTF models." },
 };
 
 // `fill`: "var" | "none" — whether the inner piece is filled (uses CSS var).
@@ -64,10 +61,25 @@ const STYLE_CFG: Record<PieceStyleId, StyleCfg> = {
   filled:  { fill: "var", stroke: "none", sw: 0,   shadow: "0 1.5px 2px rgba(0,0,0,0.5)" },
   minimal: { fill: "var", stroke: "var", sw: 1.5, shadow: "0 1px 1.5px rgba(0,0,0,0.35)" },
   ornate:  { fill: "var", stroke: "var", sw: 2.5, outerStrokeSw: 4, shadow: "0 2px 3px rgba(0,0,0,0.55)" },
-  // v1.13: in 2D the "staunton" style reuses classic (Cburnett IS FIDE
-  // Staunton). The unique value of this option is the 3D view.
-  staunton: { fill: "var", stroke: "var", sw: 2.5, shadow: "0 1.5px 2px rgba(0,0,0,0.5)" },
+  staunton: { fill: "var", stroke: "var", sw: 1.65, shadow: "0 2px 3px rgba(0,0,0,0.42)" },
+  "asset-pack": { fill: "var", stroke: "var", sw: 1.65, shadow: "0 2px 3px rgba(0,0,0,0.42)" },
 };
+
+const ASSET_PIECE_NAME: Record<string, string> = {
+  p: "Pawn",
+  n: "Knight",
+  b: "Bishop",
+  r: "Rook",
+  q: "Queen",
+  k: "King",
+};
+
+function renderAssetPiece(sym: PieceSymbol): string {
+  const isWhite = sym === sym.toUpperCase();
+  const side = isWhite ? "w" : "b";
+  const piece = ASSET_PIECE_NAME[sym.toLowerCase()] ?? "Pawn";
+  return `<img src="/assets/2d-pieces/unknuffig/${side}_${piece}.png" alt="" aria-hidden="true" draggable="false" data-piece-art="unknuffig" />`;
+}
 
 // ---- Cburnett inner-path library (paths only; no <g> envelope) ----
 //
@@ -141,6 +153,7 @@ function envelopeFor(sym: PieceSymbol, cfg: StyleCfg): string {
 }
 
 export function renderPieceSvg(sym: PieceSymbol, styleId: PieceStyleId): string {
+  if (styleId === "asset-pack") return renderAssetPiece(sym);
   const cfg = STYLE_CFG[styleId] ?? STYLE_CFG.classic;
   // The fill-only styles (filled/minimal tipping into one) close the svg
   // automatically inside envelopeFor. For others, close the </g></svg>.

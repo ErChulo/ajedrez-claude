@@ -125,11 +125,6 @@ export class Board2D {
       }
     }
     for (let c = 0; c < 8; c++) {
-      const top = document.createElement("div");
-      top.className = "file-rank file-top";
-      top.style.left = `calc(${c} * var(--square) + 4px)`;
-      top.textContent = "abcdefgh"[c];
-      this.boardEl.appendChild(top);
       const bot = document.createElement("div");
       bot.className = "file-rank file-bot";
       bot.style.right = `calc(${7 - c} * var(--square) + 4px)`;
@@ -142,12 +137,6 @@ export class Board2D {
       left.style.top = `calc(${r} * var(--square) + 4px)`;
       left.textContent = String(8 - r);
       this.boardEl.appendChild(left);
-      const right = document.createElement("div");
-      right.className = "file-rank rank-right";
-      right.style.bottom = `calc(${7 - r} * var(--square) + 4px)`;
-      right.style.transform = "translateY(0)";
-      right.textContent = String(8 - r);
-      this.boardEl.appendChild(right);
     }
   }
 

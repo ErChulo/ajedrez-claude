@@ -52,28 +52,26 @@ export const THEMES: Record<string, ThemeData> = {
       "--text-dim": "#7fa597",
       "--accent": "#6ed4a8",
       "--accent-2": "#b9d06b",
-      // Pull the light squares a touch darker so white pieces own that band.
-      "--light-sq": "#dde0bf",
-      "--dark-sq": "#4a7549",
-      "--light-stroke": "#2f5a36",
-      "--dark-stroke": "#143925",
-      // Ivory + forest ebony — same warm Staunton kit palette as the
-      // wood theme, just on a green table.
-      "--piece-fill": "#f6ecd2",
-      "--piece-fill-2": "#1f1408",
-      // Strokes: dark green outline for whites; light-sq outline for blacks.
-      "--piece-stroke": "#0c1f12",
-      "--piece-stroke-2": "#dde0bf",
+      // Original chess.com-inspired green board: familiar tournament contrast
+      // without copying proprietary assets or artwork.
+      "--light-sq": "#eeeed2",
+      "--dark-sq": "#769656",
+      "--light-stroke": "#5e7f46",
+      "--dark-stroke": "#4e6f3a",
+      "--piece-fill": "#fafafa",
+      "--piece-fill-2": "#312e2b",
+      "--piece-stroke": "#4f4b45",
+      "--piece-stroke-2": "#918b80",
       "--highlight-from": "rgba(255,235,120,0.55)",
       "--highlight-to": "rgba(140,220,160,0.55)",
       "--highlight-last": "rgba(110,180,255,0.35)",
       "--highlight-check": "rgba(255,80,80,0.55)",
     },
     three: {
-      boardLight: 0xebecd0,
-      boardDark: 0x5b8c5a,
-      pieceWhite: { color: 0xf0f3eb, roughness: 0.35, metalness: 0.08 },
-      pieceBlack: { color: 0x1c2d22, roughness: 0.4, metalness: 0.1 },
+      boardLight: 0xeeeed2,
+      boardDark: 0x769656,
+      pieceWhite: { color: 0xf7f3e8, roughness: 0.46, metalness: 0.02 },
+      pieceBlack: { color: 0x2f2a26, roughness: 0.5, metalness: 0.03 },
       squareEmissive: 0x000000,
     },
   },

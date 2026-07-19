@@ -92,7 +92,7 @@ test("toggle 2D ↔ 3D updates the board host (canvas, fallback, or auto-flip)",
   //       a few headless browser/GPU combinations hit this path before
   //       the assertion could observe the banner itself)
   // All three mean the toggle did something the user can see.
-  await expect(page.locator(".board-host canvas, .board-host .three-fallback, .board-host .board-2d")).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.board-host canvas, .board-host .three-fallback[data-state="webgl-unavailable"], .board-host .board-2d')).toBeVisible({ timeout: 60_000 });
 });
 
 test("mode tabs update the side panel", async ({ page }) => {

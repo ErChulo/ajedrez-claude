@@ -76,6 +76,21 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   side.className = "sidepanel";
   main.appendChild(side);
 
+  const syncBoardSize = (): void => {
+    const style = getComputedStyle(boardHost);
+    const padX = (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0);
+    const padY = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+    const availableWidth = boardHost.clientWidth - padX;
+    const availableHeight = boardHost.clientHeight - padY;
+    const size = Math.floor(Math.min(availableWidth, availableHeight));
+    if (size > 0) boardHost.style.setProperty("--board-size", `${size}px`);
+  };
+
+  const boardSizeObserver = new ResizeObserver(syncBoardSize);
+  boardSizeObserver.observe(boardHost);
+  window.addEventListener("resize", syncBoardSize);
+  requestAnimationFrame(syncBoardSize);
+
   // ----- Status strip contents (engineBadge + side + tools) -----
   const engineBadge = document.createElement("span");
   engineBadge.id = "engine-badge";
@@ -133,7 +148,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   let notice: HTMLDivElement;
 
   const clockCard = document.createElement("div");
-  clockCard.className = "card";
+  clockCard.className = "card clock-card";
   const clockHeading = document.createElement("h3");
   clockHeading.textContent = "Clock";
   clockCard.appendChild(clockHeading);
@@ -153,14 +168,14 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   side.appendChild(clockCard);
 
   settingsCard = document.createElement("div");
-  settingsCard.className = "card";
+  settingsCard.className = "card settings-card";
   const settingsHeading = document.createElement("h3");
   settingsHeading.textContent = "Settings";
   settingsCard.appendChild(settingsHeading);
 
   // Time control (always visible in AI / Local mode)
   const presetRow = document.createElement("div");
-  presetRow.className = "row";
+  presetRow.className = "row preset-row";
   const presetLabel = document.createElement("label");
   presetLabel.textContent = "Time control";
   presetSelect = document.createElement("select");
@@ -176,7 +191,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
 
   // AI difficulty (kept in Settings; the user-facing engine badge lives in the strip)
   const aiRow = document.createElement("div");
-  aiRow.className = "row";
+  aiRow.className = "row ai-row";
   aiRow.style.marginTop = "8px";
   const aiLabel = document.createElement("label");
   aiLabel.textContent = "AI";
@@ -197,7 +212,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   // picker's change handler cascades the new id down to whichever view
   // is currently mounted (Board2D or Board3D) and persists it.
   const styleRow = document.createElement("div");
-  styleRow.className = "row";
+  styleRow.className = "row piece-style-row";
   styleRow.style.marginTop = "8px";
   const styleLabel = document.createElement("label");
   styleLabel.textContent = "Piece style";
@@ -228,7 +243,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   styleSelect.value = storedStyle;
 
   notice = document.createElement("div");
-  notice.className = "kv";
+  notice.className = "kv setup-notice";
   notice.style.marginTop = "8px";
   notice.id = "supabase-notice";
   refreshNotice(notice);
@@ -242,7 +257,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   side.appendChild(onlineCard);
 
   const moveCard = document.createElement("div");
-  moveCard.className = "card";
+  moveCard.className = "card move-card";
   const moveList = mountMoveList(moveCard);
   side.appendChild(moveCard);
 
@@ -256,6 +271,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   function mountBoard(type: RenderMode): ChessView {
     if (currentBoard) { currentBoard.destroy(); currentBoard = null; }
     boardHost.innerHTML = "";
+    syncBoardSize();
     if (type === "2d") {
       const b = new Board2D(boardHost);
       b.mount();
@@ -265,7 +281,10 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
       return b;
     }
     const theme = THEMES[getStoredTheme()] ?? THEMES.wood;
-    const b = new Board3D(boardHost);
+    const board3dHost = document.createElement("div");
+    board3dHost.className = "board-3d-host";
+    boardHost.appendChild(board3dHost);
+    const b = new Board3D(board3dHost);
     b.mount(theme);
     // v1.12: apply the persisted piece-style up-front so the first frame
     // already reflects the user's saved preference (otherwise the view
