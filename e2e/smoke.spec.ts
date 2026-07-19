@@ -68,10 +68,10 @@ test("toggle 2D ↔ 3D swaps the board renderer (canvas appears)", async ({ page
   // + expect.board-2d visible (~1 s)
   // + click "3D" button (~500 ms; fires Three.js scene + PMREMGenerator
   //   + RoomEnvironment init which can be slow on first launch)
-  // + expect.canvas visible (10 s Playwright default)
+  // + expect.canvas visible (60 s on headless CI — see below)
   // The default 30 s blanket leaves only ~2 s headroom. 60 s gives
   // plenty of margin without hiding a real regression.
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
 
   await page.goto("/");
   await settleEngine(page);
@@ -81,7 +81,12 @@ test("toggle 2D ↔ 3D swaps the board renderer (canvas appears)", async ({ page
   await page.locator(".appbar .toggle-group").nth(1).locator('button:has-text("3D")').click();
 
   // After toggle, a <canvas> should appear inside the board host (Three.js renders into one).
-  await expect(page.locator(".board-host canvas")).toBeVisible({ timeout: 10_000 });
+  // v1.18: bumped from 10 s to 60 s. Headless Firefox on Ubuntu CI uses
+  // CPU WebGL via SwiftShader; PMREMGenerator + RoomEnvironment + 32
+  // piece-mesh shader compilation regularly starves the main thread
+  // for 10–20 s on a cold boot. Real-user Firefox on a GPU paints the
+  // first frame in well under a second.
+  await expect(page.locator(".board-host canvas")).toBeVisible({ timeout: 60_000 });
 });
 
 test("mode tabs update the side panel", async ({ page }) => {
