@@ -1,0 +1,12 @@
+<testsuites id="" name="" tests="1" failures="0" skipped="0" errors="0" time="7.720311">
+<testsuite name="ai.spec.ts" timestamp="2026-07-19T17:00:22.597Z" hostname="chromium" tests="1" failures="0" skipped="0" time="7.176" errors="0">
+<testcase name="AI mode: badge is honest, AI responds, hint and undo work" classname="ai.spec.ts" time="7.176">
+<system-out>
+<![CDATA[[e2e/ai] engine kind is: "Stockfish" (data-engine=stockfish)
+[e2e/ai] hint highlighted 2 squares
+[e2e/ai] undo restored e2 pawn, e4 cleared
+]]>
+</system-out>
+</testcase>
+</testsuite>
+</testsuites>
