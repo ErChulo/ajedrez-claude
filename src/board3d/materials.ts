@@ -21,16 +21,24 @@ export function buildPieceMaterial(color: "white" | "black", theme: ThemeData): 
     clearcoat: color === "white" ? 0.65 : 0.4,
     clearcoatRoughness: color === "white" ? 0.08 : 0.2,
   };
-  // Per-theme emissive stays if the theme author set one. White pieces
-  // additionally get a small colour-matched emissive lift (warm ivory for
-  // wood/green, cool blue-white for neon) so the piece top-sides carry a
-  // constant glow that never fades into the underlying square.
+  // v1.18: stronger piece-vs-board distinguishability. White pieces
+  // get a larger colour-matched emissive lift (0.18 → 0.45) so the
+  // ivory silhouette carries constant brightness across every camera
+  // angle and never fades into the equally-tan light squares. Black
+  // pieces get a small colour-matched emissive lift (0.20) so the dark
+  // carved-Staunton silhouette doesn't merge into the dark squares at
+  // glancing angles. Per-theme emissive (e.g. neon) still wins when
+  // the theme author set one — that's intentional so neon can stay
+  // vivid.
   if (color === "white") {
     params.emissive = new THREE.Color(spec.color);
-    params.emissiveIntensity = 0.18;
+    params.emissiveIntensity = 0.45;
   } else if (spec.emissive !== undefined) {
     params.emissive = new THREE.Color(spec.emissive);
-    params.emissiveIntensity = 0.25;
+    params.emissiveIntensity = 0.35;
+  } else {
+    params.emissive = new THREE.Color(spec.color);
+    params.emissiveIntensity = 0.20;
   }
   return new THREE.MeshPhysicalMaterial(params);
 }

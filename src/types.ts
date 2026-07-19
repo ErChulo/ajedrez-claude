@@ -65,7 +65,13 @@ export type ThemeName = "wood" | "green" | "neon";
 // (Clark Rubber's Staunton-Pieces repo, /public/assets/3d-pieces/staunton/).
 export type PieceStyleId = "classic" | "bold" | "outline" | "filled" | "minimal" | "ornate" | "staunton";
 export const PIECE_STYLE_IDS: readonly PieceStyleId[] = ["classic", "bold", "outline", "filled", "minimal", "ornate", "staunton"];
-export const DEFAULT_PIECE_STYLE: PieceStyleId = "classic";
+// v1.18: default to the MIT-licensed real-geometry Staunton STL set
+// (loaded from /public/assets/3d-pieces/staunton/{Kind}.stl). The
+// procedural LatheGeometry fallback ("classic") is still selectable
+// from the TopBar piece-style menu; this just changes what's painted
+// on first mount so users immediately see carved Staunton pieces
+// rather than the white-painted lathe silhouettes.
+export const DEFAULT_PIECE_STYLE: PieceStyleId = "staunton";
 
 export interface PieceStyleMeta {
   id: PieceStyleId;

@@ -39,15 +39,17 @@
   /* Board is sized by min() over available dimensions, NOT by vmin.
      Layout-aware sizing means the board shrinks naturally instead of
      pushing the document past 100dvh.
-     v1.15: chrome deduction tightened 180 → 160 px (the actual appbar +
-     status-strip + .game-shell padding + sidepanel are roughly 150 px
-     on a desktop, the previous 180 left 30 px of unused air). Cap
-     bumped 720 → 900 px so 1080+ viewports use the full available room
-     instead of cropping. The Three.js renderer + camera are also locked
-     to 1:1 (see Board3D.handleResize + mount camera setup) — the
-     square CSS + locked renderer/camera form a triple guarantee that
-     the board stays perfectly square at every viewport. */
-  --board-size: min(100%, calc(100dvh - 160px), 900px);
+     v1.18: 900 px hard cap REMOVED. The board now grows with the
+     viewport up to whichever ceiling the layout can support:
+     • 100% of board-host width (parent flex cell)
+     • 100dvh minus chrome (appbar + status-strip + game-shell padding)
+     • the smaller of 95vmin (lesser of vw / vh) or (100vw - 360 px)
+       so the sidepanel is never starved of horizontal real-estate.
+     The Three.js renderer + camera stay locked to 1:1 (see
+     Board3D.handleResize + mount camera setup). Combined, this gives a
+     board that grows with the viewport and stays a perfect 1:1 square
+     on every screen size. */
+  --board-size: min(100%, calc(100dvh - 160px), min(95vmin, calc(100vw - 360px)));
   --square: calc(var(--board-size) / 8);
 
   --bg: #0c0f14;
@@ -368,9 +370,13 @@ select {
   width: 100%;
   height: 100%;
   display: block;
-  /* Both fill and stroke come from CSS vars; stroke width comes from
-     the inline SVG attribute. Filter gives dark squares a tiny
-     contrast lift so light-piece edges don't fade. */
+  /* v1.18: subtle drop-shadow gives both piece colors a defined
+     silhouette against every square. SVG fill+stroke already provides
+     color contrast; drop-shadow provides EDGE contrast — a white piece
+     on a light wood square reads as a piece-of-cardboard-shaped fill
+     without it. Opacity kept around 0.45 so the halo doesn't dominate
+     on small viewports were pieces are already 18-20 px wide. */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
 }
 
 /* Captured-piece ghost — same positioning as .piece but no pointer events,
@@ -658,11 +664,11 @@ select {
      board as a horizontal scroll strip. The chrome accounting here is
      appbar (~40px) + status-strip (~36px) + game-shell padding 20px +
      gap 12px + sidepanel-row content (~110px) ≈ 218px — so 200 px is
-     a comfortable margin. 94vw floor prevents the board from exceeding
-     the viewport width on mid-width phones (where 100dvh deduction
-     alone might still be wider than vw on a short landscape phone). */
+     a comfortable margin. v1.18: dropped 94vw floor; the 100% takes
+     the parent board-host width directly, and the calc above sets the
+     vertical cap, so the board scales sensibly at any mobile width. */
   :root {
-    --board-size: min(100%, calc(100dvh - 200px), 94vw);
+    --board-size: min(100%, calc(100dvh - 200px));
   }
 }
 @media (max-width: 520px) {
@@ -670,13 +676,9 @@ select {
   .status-strip { padding: 6px 8px; gap: 6px; }
   .appbar { padding: 8px 10px; gap: 6px; }
   .appbar .title { font-size: 16px; }
-  /* Chrome accounting on a 520 px viewport: appbar ~32px + status-strip
-     ~28px + game-shell padding 20px + gap 12px + sidepanel row ~108px ≈
-     200 px. We use 230 px to leave comfortable safety on small-height
-     devices (e.g. iPhone SE 375x667) where 100dvh can be as small as
-     559 px after URL bar collapse. The board stays a 1:1 square via
-     aspect-ratio:1/1 + Board3D.handleResize. */
+  /* v1.18: dropped the 94vw floor for the same reason as the 880
+     breakpoint — 100% of board-host is the right anchor on a phone. */
   :root {
-    --board-size: min(100%, calc(100dvh - 230px), 94vw);
+    --board-size: min(100%, calc(100dvh - 230px));
   }
 }
