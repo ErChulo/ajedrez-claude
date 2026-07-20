@@ -852,3 +852,37 @@ select {
   }
   .settings-card { display: none; }
 }
+
+/* Online panel: expand on mobile so the invitation code / join form is reachable. */
+@media (max-width: 880px) {
+  [data-online-state="lobby"] .game-shell,
+  [data-online-state="waiting"] .game-shell {
+    height: 100dvh;
+  }
+  [data-online-state="lobby"] .board-host,
+  [data-online-state="waiting"] .board-host {
+    flex: 0 0 auto;
+    max-height: 40dvh;
+  }
+  [data-online-state="lobby"] .sidepanel,
+  [data-online-state="waiting"] .sidepanel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+    border-radius: 0;
+  }
+  [data-online-state="lobby"] .sidepanel .move-card,
+  [data-online-state="waiting"] .sidepanel .move-card,
+  [data-online-state="lobby"] .sidepanel .settings-card,
+  [data-online-state="waiting"] .sidepanel .settings-card {
+    display: none;
+  }
+  [data-online-state="lobby"] .sidepanel .online-card,
+  [data-online-state="waiting"] .sidepanel .online-card {
+    overflow: visible;
+    min-height: 0;
+  }
+}
