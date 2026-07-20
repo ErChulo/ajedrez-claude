@@ -33,6 +33,7 @@ import { isSupabaseConfigured, currentUserId, signInAnonymously } from "@/net/su
 import {
   createOnlineGame,
   joinOnlineGame,
+  fetchOnlineGame,
   listWaitingGames,
   subscribeGame,
   abortOnlineGame,
@@ -268,6 +269,14 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   let unsubscribeGame: (() => void) | null = null;
   let modalShown = false;
 
+  function setOnlineState(state: "off" | "lobby" | "waiting" | "active", gameId?: string, seat?: Side): void {
+    root.dataset.onlineState = state;
+    if (gameId) root.dataset.onlineGameId = gameId;
+    else delete root.dataset.onlineGameId;
+    if (seat) root.dataset.onlineSeat = seat;
+    else delete root.dataset.onlineSeat;
+  }
+
   function mountBoard(type: RenderMode): ChessView {
     if (currentBoard) { currentBoard.destroy(); currentBoard = null; }
     boardHost.innerHTML = "";
@@ -308,6 +317,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   }
 
   function newGame(humanSide: Side) {
+    setOnlineState("off");
     if (game) {
       game.shutdown();
       unsubscribeGame?.();
@@ -384,7 +394,32 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
 
   // Track the in-flight creator-waits-for-opponent subscription so cancel works.
   let creatorSubscription: { unsubscribe: () => void } | null = null;
+  let creatorPollTimer: number | null = null;
   let creatorGameId: string | null = null;
+
+  function clearCreatorWaiters(): void {
+    creatorSubscription?.unsubscribe();
+    creatorSubscription = null;
+    if (creatorPollTimer !== null) {
+      window.clearInterval(creatorPollTimer);
+      creatorPollTimer = null;
+    }
+  }
+
+  async function activateCreatorGame(row: OnlineGameMeta): Promise<void> {
+    if (row.status !== "active" || row.id !== creatorGameId) return;
+    clearCreatorWaiters();
+    creatorGameId = null;
+    await startOnlineGame(row);
+  }
+
+  async function cancelCreatorWait(): Promise<void> {
+    const gameId = creatorGameId;
+    clearCreatorWaiters();
+    if (!gameId) return;
+    await abortOnlineGame(gameId);
+    creatorGameId = null;
+  }
 
   let onlinePanel = mountOnlinePanel(onlineCard, {
     get displayName() { return whiteName; },
@@ -396,14 +431,17 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
         incrementSeconds: preset.incrementSeconds,
       });
       creatorGameId = meta.id;
+      setOnlineState("waiting", meta.id, "white");
       creatorSubscription = subscribeGame(meta.id, (row) => {
-        if (row.status === "active") {
-          creatorSubscription?.unsubscribe();
-          creatorSubscription = null;
-          creatorGameId = null;
-          void startOnlineGame(row);
-        }
+        void activateCreatorGame(row);
       });
+      creatorPollTimer = window.setInterval(() => {
+        const gameId = creatorGameId;
+        if (!gameId) return;
+        void fetchOnlineGame(gameId).then((row) => {
+          if (row) void activateCreatorGame(row);
+        });
+      }, 750);
       onlinePanel.setState({ kind: "waiting", meta });
       return meta;
     },
@@ -423,12 +461,8 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
       return fresh;
     },
     async onCancelWaiting() {
-      if (creatorSubscription && creatorGameId) {
-        creatorSubscription.unsubscribe();
-        creatorSubscription = null;
-        await abortOnlineGame(creatorGameId);
-        creatorGameId = null;
-      }
+      await cancelCreatorWait();
+      setOnlineState("lobby");
       onlinePanel.setState({ kind: "lobby", joinError: null, createError: null });
     },
   });
@@ -438,6 +472,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
     const uid = await currentUserId();
     if (!uid) return;
     const seated: Side = meta.whitePlayerId === uid ? "white" : "black";
+    setOnlineState("active", meta.id, seated);
     if (game) {
       game.shutdown();
       unsubscribeGame?.();
@@ -483,18 +518,23 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
     onMode(m) {
       setStatusStripMode(m);
       if (m === "online" && !isSupabaseConfigured()) {
+        setOnlineState("off");
         notice.innerHTML = `<span>Online mode</span><span style="color:var(--text-dim)">Not configured — see SETUP.md</span>`;
         showSettingsCard();
         hideOnlinePanel();
         return;
       }
       if (m === "online") {
+        setOnlineState("lobby");
         showOnlinePanel();
         hideSettingsCard();
         onlinePanel.setState({ kind: "lobby", joinError: null, createError: null });
         notice.innerHTML = `<span>Online</span><span style="color:var(--accent-2)">Configured</span>`;
         return;
       }
+      void cancelCreatorWait();
+      if (game?.sink.isOnline) newGame((sideSelect?.value as Side) ?? "white");
+      else setOnlineState("off");
       showSettingsCard();
       hideOnlinePanel();
       notice.innerHTML = `<span>Mode</span><span>${m === "ai" ? "AI" : "Local"}</span>`;

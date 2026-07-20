@@ -111,6 +111,7 @@ export class Board2D {
   mount(): void {
     this.boardEl = document.createElement("div");
     this.boardEl.className = "board-2d";
+    this.boardEl.dataset.selectableSide = this.state.selectable ?? "none";
     this.host.appendChild(this.boardEl);
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
@@ -354,6 +355,7 @@ export class Board2D {
 
   setSelectable(side: Side | null): void {
     this.state.selectable = side;
+    this.boardEl.dataset.selectableSide = side ?? "none";
     this.clearSelection();
   }
 

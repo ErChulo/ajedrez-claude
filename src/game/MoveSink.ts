@@ -24,4 +24,6 @@ export interface MoveSink {
   readonly isOnline: boolean;
   /** Optional server-side resignation marker. Local sinks no-op. */
   resign?(): Promise<void>;
+  /** Optional teardown for sinks with subscriptions or other external resources. */
+  destroy?(): void;
 }

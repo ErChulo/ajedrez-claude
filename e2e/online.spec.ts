@@ -72,7 +72,7 @@ test.describe("online 2-player round-trip", () => {
     // The default selected preset is whatever PRESETS' first entry is. Force
     // a fast preset (1+0 bullet) so clocks tick fast and we can measure drift.
     const presetSelect = pageA.locator(".online-form select").first();
-    await presetSelect.selectOption({ label: "1+0 Bullet" });
+    await presetSelect.selectOption("b1");
     await pageA.locator('button:has-text("Create game")').click();
 
     // 2. Wait for the "waiting" substate with a visible join code.
@@ -89,7 +89,12 @@ test.describe("online 2-player round-trip", () => {
     await pageB.locator('button:has-text("Join")').click();
 
     // 4. Both clients leave the online lobby and load the standard 2D board.
-    //    Allow generous time because it includes the initial Realtime wire-up.
+    //    The board is already visible behind the lobby, so wait for the app's
+    //    online-active marker before sending moves.
+    await expect(pageA.locator("#app")).toHaveAttribute("data-online-state", "active", { timeout: 15_000 });
+    await expect(pageB.locator("#app")).toHaveAttribute("data-online-state", "active", { timeout: 15_000 });
+    await expect(pageA.locator("#app")).toHaveAttribute("data-online-seat", "white");
+    await expect(pageB.locator("#app")).toHaveAttribute("data-online-seat", "black");
     await pageA.locator(".board-2d").waitFor({ timeout: 15_000 });
     await pageB.locator(".board-2d").waitFor({ timeout: 15_000 });
 
@@ -104,7 +109,10 @@ test.describe("online 2-player round-trip", () => {
     for (let i = 0; i < moves.length; i++) {
       const actor = i % 2 === 0 ? pageA : pageB;
       const watcher = i % 2 === 0 ? pageB : pageA;
+      const actorSide = i % 2 === 0 ? "white" : "black";
       const { from, to } = moves[i];
+      await expect(actor.locator(`[data-role="${actorSide}-active"]`)).toContainText("active", { timeout: 5_000 });
+      await expect(actor.locator(".board-2d")).toHaveAttribute("data-selectable-side", actorSide, { timeout: 5_000 });
       await actor.locator(`.square[data-square="${from}"]`).click();
       await actor.locator(`.square[data-square="${to}"]`).click();
       // The watcher should see the source empty and dest populated within ~2s.
@@ -116,8 +124,8 @@ test.describe("online 2-player round-trip", () => {
 
     // 6. Both clients should agree on the FEN at this point.
     // Pull the move list count — it should be 5 on both sides (5 half-moves).
-    const moveCountA = await pageA.locator(".move-card .move-row, .move-card [data-move-index]").count();
-    const moveCountB = await pageB.locator(".move-card .move-row, .move-card [data-move-index]").count();
+    const moveCountA = await pageA.locator(".move-card .move-list .ply").filter({ hasText: /\S/ }).count();
+    const moveCountB = await pageB.locator(".move-card .move-list .ply").filter({ hasText: /\S/ }).count();
     expect(moveCountA).toBeGreaterThanOrEqual(5);
     expect(moveCountB).toBeGreaterThanOrEqual(5);
 

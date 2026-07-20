@@ -100,7 +100,7 @@ export class Game {
    * Public so OnlineSink and tests can drive a move without re-running legality
    * (legality has already been validated at the call site before submitMove).
    */
-  async executeMove(input: ApplyMoveInput): Promise<void> {
+  async executeMove(input: ApplyMoveInput, opts: { deferTurnControl?: boolean } = {}): Promise<void> {
     // No re-entrance guard HERE: `kickoffAiThink()` recursively awaits
     // `executeMove(aiMove)` while this outer executeMove()'s animation
     // chain is in flight. With a guard at this layer, the AI's reply would
@@ -133,10 +133,12 @@ export class Game {
         this.endGame();
         return;
       }
-      if (snap.turn === this.humanSide) {
+      if (snap.turn === this.humanSide && !opts.deferTurnControl) {
         this.view.setSelectable(this.humanSide);
-      } else {
+      } else if (!this.sink.isOnline) {
         await this.kickoffAiThink();
+      } else {
+        this.view.setSelectable(null);
       }
     } finally {
       this.isProcessingMove = false;
@@ -180,12 +182,12 @@ export class Game {
   }
 
   start(): void {
-    this.view.setSelectable(this.humanSide);
+    this.view.setSelectable(this.engine.turn() === this.humanSide ? this.humanSide : null);
     this.view.clearSelection();
     sounds.play("gameStart");
-    this.clock.start("white");
+    this.clock.start(this.engine.turn());
     this.publishState();
-    if (this.engine.turn() !== this.humanSide) {
+    if (this.engine.turn() !== this.humanSide && !this.sink.isOnline) {
       void this.kickoffAiThink();
     }
   }
@@ -193,7 +195,13 @@ export class Game {
   shutdown(): void {
     this.aiThinkAbort?.abort();
     this.clock.pause();
+    this.sink.destroy?.();
     this.ai.shutdown();
+  }
+
+  syncTurnControl(): void {
+    const s = this.engine.snapshot();
+    this.view.setSelectable(s.status === "playing" && s.turn === this.humanSide ? this.humanSide : null);
   }
 
   async resign(): Promise<void> {

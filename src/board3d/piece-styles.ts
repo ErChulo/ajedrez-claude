@@ -82,6 +82,10 @@ const CHESS3D_URL_BY_KIND: Record<PieceKind, string> = {
   q: "/assets/3d-pieces/chess3d/queen/scene.gltf",
   k: "/assets/3d-pieces/chess3d/king/scene.gltf",
 };
+const CHESS3D_UPRIGHT_ROTATION_BY_KIND: Partial<Record<PieceKind, { x: number; y: number; z: number }>> = {
+  // This source model is authored Z-up while the board scene is Y-up.
+  n: { x: -Math.PI / 2, y: 0, z: 0 },
+};
 
 let stlLoader: STLLoader | null = null;
 function getLoader(): STLLoader {
@@ -138,6 +142,7 @@ async function loadChess3dGroup(kind: PieceKind): Promise<THREE.Group> {
   const promise = (async () => {
     const gltf = await getGltfLoader().loadAsync(CHESS3D_URL_BY_KIND[kind]);
     const root = gltf.scene;
+    applyChess3dUprightCorrection(kind, root);
     root.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
@@ -162,6 +167,27 @@ async function loadChess3dGroup(kind: PieceKind): Promise<THREE.Group> {
   });
   chess3dLoadPromises.set(kind, promise);
   return promise;
+}
+
+function applyChess3dUprightCorrection(kind: PieceKind, root: THREE.Group): void {
+  const explicit = CHESS3D_UPRIGHT_ROTATION_BY_KIND[kind];
+  if (explicit) {
+    root.rotation.x += explicit.x;
+    root.rotation.y += explicit.y;
+    root.rotation.z += explicit.z;
+    root.updateMatrixWorld(true);
+    return;
+  }
+
+  root.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+  if (size.z > size.y * 1.15 && size.z >= size.x) {
+    root.rotation.x -= Math.PI / 2;
+    root.updateMatrixWorld(true);
+  } else if (size.x > size.y * 1.15 && size.x >= size.z) {
+    root.rotation.z += Math.PI / 2;
+    root.updateMatrixWorld(true);
+  }
 }
 
 /** Eagerly loads the six MIT Staunton STLs. Resolves when ALL are done (or one fails). */

@@ -96,8 +96,11 @@ test("3D renderer uses the same square board slot", async ({ page }) => {
     const host = page.locator(".board-3d-host");
     await expect(host).toHaveAttribute("data-piece-assets", "ready", { timeout: 60_000 });
     await expect(host).toHaveAttribute("data-max-piece-footprint-ratio", /0\.[0-9]+|0|1/);
+    await expect(host).toHaveAttribute("data-min-piece-upright-ratio", /[0-9]+\.[0-9]+/);
     const ratio = Number(await host.getAttribute("data-max-piece-footprint-ratio"));
+    const uprightRatio = Number(await host.getAttribute("data-min-piece-upright-ratio"));
     expect(ratio).toBeLessThanOrEqual(0.62);
+    expect(uprightRatio).toBeGreaterThan(1.05);
   }
 
   const layout = await readLayout(page);

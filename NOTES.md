@@ -121,10 +121,10 @@ Both must pass before merging.
 
 ## Real-time / online status
 
-Database schema, RLS, and the `Supabase` SDK wrapper ship in this build.
-UI wiring for create-game / join-by-code / live-move subscription lands
-in a follow-up commit. Until then the supabase-configured path renders
-the "Online mode: Supabase not configured" notice.
+Database schema, RLS, the `Supabase` SDK wrapper, create-game / join-by-code
+UI, and live move subscriptions ship in this build. Online play is casual
+anonymous multiplayer: clients validate moves through `chess.js`, while RLS
+gates seated-player writes and turn ownership.
 
 ## Deviations from the build prompt
 

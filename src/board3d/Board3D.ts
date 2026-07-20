@@ -397,7 +397,10 @@ export class Board3D {
     });
   }
 
-  setSelectable(side: Side | null): void { this.selectable = side; }
+  setSelectable(side: Side | null): void {
+    this.selectable = side;
+    this.host.dataset.selectableSide = side ?? "none";
+  }
 
   setLegalTargets(origin: Square, targets: Square[], captures: Square[]): void {
     this.clearSelection();
@@ -591,12 +594,16 @@ export class Board3D {
 
   private updateFootprintMetric(): void {
     let maxRatio = 0;
+    let minUprightRatio = Number.POSITIVE_INFINITY;
     for (const [, group] of this.pieceMeshes) {
       const box = new THREE.Box3().setFromObject(group);
       const size = box.getSize(new THREE.Vector3());
-      maxRatio = Math.max(maxRatio, size.x / BOARD.squareSize, size.z / BOARD.squareSize);
+      const footprint = Math.max(size.x, size.z);
+      maxRatio = Math.max(maxRatio, footprint / BOARD.squareSize);
+      if (footprint > 0) minUprightRatio = Math.min(minUprightRatio, size.y / footprint);
     }
     this.host.dataset.maxPieceFootprintRatio = maxRatio.toFixed(3);
+    this.host.dataset.minPieceUprightRatio = Number.isFinite(minUprightRatio) ? minUprightRatio.toFixed(3) : "0.000";
   }
 
   private disposePieceGroup(group: THREE.Group): void {

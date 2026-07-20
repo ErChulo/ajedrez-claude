@@ -13,10 +13,9 @@ Made to run entirely on the free tiers of:
 
 No custom server. No paid compute.
 
-> Status: **local-first is fully playable** (milestones 1–8 from the build
-> prompt). Online multiplayer is wired at the database/schema/RLS level —
-> enable it by following [SETUP.md](./SETUP.md) and adding your Supabase
-> URL + anon key to `.env.local`.
+> Status: **local-first is fully playable**. Casual anonymous online
+> multiplayer is available after the Supabase setup in [SETUP.md](./SETUP.md)
+> and the two local/Vercel env vars are configured.
 
 ---
 
@@ -31,8 +30,8 @@ npm run build        # produces static dist/ (deploy this)
 ```
 
 To enable online play, copy `.env.example` to `.env.local` and paste your
-Supabase project URL + anon key — see [SETUP.md](./SETUP.md) for the
-five-minute Supabase setup.
+Supabase project URL + publishable key — see [SETUP.md](./SETUP.md) for the
+step-by-step Supabase setup.
 
 ---
 
@@ -59,14 +58,10 @@ five-minute Supabase setup.
 - ✓ WebAudio-generated move / capture / check / castle / promote / illegal
   / start / end / low-time-tick sounds. Zero audio assets shipped.
 - ✓ Resign, game-over modal with PGN, and move list.
+- ✓ Casual anonymous online play: create a game, share/join by code, and sync
+  moves/clocks through Supabase Realtime.
 - ✓ Row Level Security written in `src/net/rls.sql` so writes are bound to
   player-uid, turn, and rate-limits.
-
-## Features (deferred to your Supabase setup)
-
-- ⏳ Real-time online multiplayer UI: Supabase schema + RLS are already in
-  `src/net/schema.sql` and `src/net/rls.sql`. UI endpoints for create/join
-  game will land soon.
 
 ---
 
@@ -165,8 +160,9 @@ npm run build          # outputs dist/
 
 ## Security model
 
-- The Supabase **anon** key is meant to be public. Real protection comes
-  from Row Level Security on every table. See `src/net/rls.sql`:
+- The Supabase **publishable** key (legacy UI: **anon public** key) is meant
+  to be public. Real protection comes from Row Level Security on every table.
+  See `src/net/rls.sql`:
   - Players can only update `games` rows they own a seat on.
   - `moves` are insertable only when a Security-Definer function confirms
     it's that user's turn.

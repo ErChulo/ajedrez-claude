@@ -4,7 +4,7 @@
 //   submitMove(input)
 //     - apply locally → engine state, animations, clock tick (optimistic UI)
 //     - read snapshot.history[-1] to get the just-applied MoveRecord
-//     - INSERT one row into `moves` and UPDATE `games.{fen,turn,clocks,last_move_at}`
+//     - INSERT one row into `moves` and UPDATE `games.{fen,pgn,status,turn,clocks,last_move_at}`
 //     - on INSERT failure (RLS out-of-turn, network): log warn — local state stays
 //       optimistic. Reconciling requires a server pull.
 //
@@ -27,6 +27,7 @@ import {
   subscribeGame,
   subscribeMoves,
   sendOnlineMove,
+  fetchOnlineGame,
   resignOnlineGame,
   type OnlineGameMeta,
   type OnlineMoveRow,
@@ -47,8 +48,13 @@ export class OnlineSink implements MoveSink {
   private subMoves: { unsubscribe: () => void } | null = null;
   private lastSeenMoveIndex = 0;
   private writeInFlight = 0;
+  private serverTurn: Side;
+  private serverStatus: OnlineGameMeta["status"];
 
-  constructor(private readonly opts: OnlineSinkOptions) {}
+  constructor(private readonly opts: OnlineSinkOptions) {
+    this.serverTurn = opts.initialMeta.turn;
+    this.serverStatus = opts.initialMeta.status;
+  }
 
   /** Bind to the Game instance AFTER construction. Captures lastSeenMoveIndex
    *  at the moment we bind (so any moves already in the engine history won't
@@ -82,21 +88,27 @@ export class OnlineSink implements MoveSink {
     const snap = game.snapshot();
     const last = snap.history.at(-1);
     if (!last) return; // shouldn't happen — executeMove ran
+    const localMoveIndex = snap.history.length;
+    this.lastSeenMoveIndex = Math.max(this.lastSeenMoveIndex, localMoveIndex);
     const cs = game.clockSnapshot();
+    const status: OnlineGameMeta["status"] = snap.status === "playing" ? "active" : snap.status;
     this.writeInFlight++;
     try {
-      await sendOnlineMove({
+      const writtenMoveIndex = await sendOnlineMove({
         gameId: this.opts.gameId,
         san: last.san,
         from,
         to,
         promotion,
         fenAfter: snap.fen,
+        pgn: snap.pgn,
         turn: snap.turn,
+        status,
         whiteTimeMs: cs.whiteMs,
         blackTimeMs: cs.blackMs,
         lastMoveAtIso: new Date().toISOString(),
       });
+      this.lastSeenMoveIndex = Math.max(this.lastSeenMoveIndex, writtenMoveIndex);
     } catch (e) {
       console.warn("OnlineSink: move write rejected by RLS / network — local state remains optimistic.", e);
     } finally {
@@ -108,24 +120,55 @@ export class OnlineSink implements MoveSink {
     if (!this.gameRef) return;
     if (move.move_index <= this.lastSeenMoveIndex) return; // dedupe
     this.lastSeenMoveIndex = move.move_index;
+    void this.applyMoveRow(move);
+  }
+
+  private async applyMoveRow(move: OnlineMoveRow): Promise<void> {
+    if (!this.gameRef) return;
     const input: ApplyMoveInput = {
       from: move.from_square as ApplyMoveInput["from"],
       to: move.to_square as ApplyMoveInput["to"],
       ...(move.promotion ? { promotion: move.promotion } : {}),
     };
-    void this.gameRef.executeMove(input);
+    await this.gameRef.executeMove(input, { deferTurnControl: true });
+    await this.waitForServerTurn(this.gameRef.snapshot().turn);
+    this.syncTurnControlIfServerCaughtUp();
   }
 
   private onGameRow(row: OnlineGameMeta): void {
     if (!this.gameRef) return;
+    this.serverTurn = row.turn;
+    this.serverStatus = row.status;
     // Drift correction: server-authoritative remaining time.
     this.gameRef.clock.forceUpdate(
       row.whiteTimeRemainingMs,
       row.blackTimeRemainingMs,
       row.status === "active" ? row.turn : null,
     );
+    this.syncTurnControlIfServerCaughtUp();
     if (row.status !== "waiting" && row.status !== "active") {
       this.opts.onGameEnd?.(row.status);
+    }
+  }
+
+  private syncTurnControlIfServerCaughtUp(): void {
+    if (!this.gameRef) return;
+    const snap = this.gameRef.snapshot();
+    if (this.serverStatus === "active" && this.serverTurn === snap.turn) {
+      this.gameRef.syncTurnControl();
+    }
+  }
+
+  private async waitForServerTurn(turn: Side): Promise<void> {
+    for (let i = 0; i < 8; i++) {
+      if (this.serverStatus === "active" && this.serverTurn === turn) return;
+      const row = await fetchOnlineGame(this.opts.gameId);
+      if (row) {
+        this.serverTurn = row.turn;
+        this.serverStatus = row.status;
+        if (this.serverStatus === "active" && this.serverTurn === turn) return;
+      }
+      await delay(250);
     }
   }
 
@@ -133,4 +176,8 @@ export class OnlineSink implements MoveSink {
   get pendingWrites(): number { return this.writeInFlight; }
   get seat(): Side { return this.opts.seated; }
   get gameId(): string { return this.opts.gameId; }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

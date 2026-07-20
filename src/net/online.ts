@@ -171,11 +171,13 @@ export async function sendOnlineMove(opts: {
   to: string;
   promotion: string | null;
   fenAfter: string;
+  pgn: string;
   turn: Side;
+  status: OnlineGameMeta["status"];
   whiteTimeMs: number;
   blackTimeMs: number;
   lastMoveAtIso: string;
-}): Promise<void> {
+}): Promise<number> {
   const sb = getSupabase();
   if (!sb) throw new Error("Supabase not configured");
   const { data: auth } = await sb.auth.getUser();
@@ -191,7 +193,7 @@ export async function sendOnlineMove(opts: {
   const nextIdx = (last?.move_index ?? 0) + 1;
   // 2) Insert move. RLS `moves_insert_only_on_turn` + `is_my_turn()` is the
   //    server-side gate that protects against out-of-turn inserts.
-  const { error: moveErr } = await sb.from("moves").insert({
+  const { data: insertedMove, error: moveErr } = await sb.from("moves").insert({
     game_id: opts.gameId,
     move_index: nextIdx,
     san: opts.san,
@@ -200,18 +202,21 @@ export async function sendOnlineMove(opts: {
     promotion: opts.promotion,
     fen_after: opts.fenAfter,
     by_player_id: uid,
-  });
+  }).select("move_index").single();
   if (moveErr) throw new Error("Move rejected by RLS: " + moveErr.message);
   // 3) Update game row: turn flips, clocks reflect post-increment values,
   //    last_move_at anchors for client clock drift correction.
   const { error: gameErr } = await sb.from("games").update({
     fen: opts.fenAfter,
+    pgn: opts.pgn,
+    status: opts.status,
     turn: opts.turn,
-    white_time_remaining_ms: opts.whiteTimeMs,
-    black_time_remaining_ms: opts.blackTimeMs,
+    white_time_remaining_ms: Math.max(0, Math.round(opts.whiteTimeMs)),
+    black_time_remaining_ms: Math.max(0, Math.round(opts.blackTimeMs)),
     last_move_at: opts.lastMoveAtIso,
   }).eq("id", opts.gameId);
   if (gameErr) throw new Error("Game update rejected by RLS: " + gameErr.message);
+  return insertedMove?.move_index ?? nextIdx;
 }
 
 export async function resignOnlineGame(gameId: string): Promise<void> {
