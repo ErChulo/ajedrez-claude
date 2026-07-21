@@ -33,7 +33,7 @@ interface BoardState {
   inCheck?: Square;
 }
 
-function squareName(row: number, col: number): Square {
+function squareNameRaw(row: number, col: number): Square {
   return (`${"abcdefgh"[col]}${8 - row}`) as Square;
 }
 
@@ -43,6 +43,7 @@ export class Board2D {
   private squares: Map<Square, HTMLDivElement> = new Map();
   private pieces: Map<Square, HTMLDivElement> = new Map();
   private state: BoardState = { history: [], selectable: "white" };
+  private flipped = false;
 
   private onMoveAttempt?: (input: ApplyMoveInput) => void;
   private onSelect?: (sq: Square) => void;
@@ -108,6 +109,20 @@ export class Board2D {
 
   constructor(host: HTMLElement) { this.host = host; }
 
+  private squareName(row: number, col: number): Square {
+    if (this.flipped) {
+      return (`${"hgfedcba"[col]}${row + 1}`) as Square;
+    }
+    return squareNameRaw(row, col);
+  }
+
+  setFlipped(flipped: boolean): void {
+    if (this.flipped === flipped) return;
+    this.flipped = flipped;
+    this.destroy();
+    this.mount();
+  }
+
   mount(): void {
     this.boardEl = document.createElement("div");
     this.boardEl.className = "board-2d";
@@ -118,7 +133,7 @@ export class Board2D {
         const sq = document.createElement("div");
         const isLight = (row + col) % 2 === 1;
         sq.className = `square ${isLight ? "light" : "dark"}`;
-        sq.dataset.square = squareName(row, col);
+        sq.dataset.square = this.squareName(row, col);
         sq.addEventListener("click", (e) => this.onSquareClick(e));
         sq.addEventListener("pointerdown", (e) => this.onSquarePointerDown(e));
         this.boardEl.appendChild(sq);
@@ -129,14 +144,14 @@ export class Board2D {
       const bot = document.createElement("div");
       bot.className = "file-rank file-bot";
       bot.style.right = `calc(${7 - c} * var(--square) + 4px)`;
-      bot.textContent = "abcdefgh"[c];
+      bot.textContent = this.flipped ? "hgfedcba"[c] : "abcdefgh"[c];
       this.boardEl.appendChild(bot);
     }
     for (let r = 0; r < 8; r++) {
       const left = document.createElement("div");
       left.className = "file-rank rank-left";
       left.style.top = `calc(${r} * var(--square) + 4px)`;
-      left.textContent = String(8 - r);
+      left.textContent = this.flipped ? String(r + 1) : String(8 - r);
       this.boardEl.appendChild(left);
     }
   }

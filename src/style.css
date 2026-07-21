@@ -209,6 +209,28 @@ select {
   color: var(--danger);
   animation: pulse 1s ease-in-out infinite;
 }
+
+.toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+  background: var(--panel, #1a1a2e);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  animation: toastIn 0.25s ease;
+}
+.toast.err {
+  border-color: rgba(255,70,90,0.3);
+  color: var(--danger, #ff465a);
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50%      { transform: scale(1.06); opacity: 0.85; }
@@ -852,6 +874,38 @@ select {
   }
   .settings-card { display: none; }
 }
+
+/* Board flip: swap clock order so black clock is near black pieces. */
+[data-board-flipped="true"] .clock-card {
+  display: flex;
+  flex-direction: column;
+}
+[data-board-flipped="true"] .clock-card .kv:first-child { order: 1; }
+[data-board-flipped="true"] .clock-card .kv:last-child { order: -1; }
+[data-board-flipped="true"] .clock-card h3 { order: 0; }
+
+/* Board flip: show "Playing as Black" badge on the board. */
+[data-board-flipped="true"] .board-host::after {
+  content: "Playing as Black";
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.65);
+  color: var(--text-dim, #aaa);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 5;
+  letter-spacing: 0.4px;
+  animation: fadeInBadge 0.4s ease;
+}
+@keyframes fadeInBadge {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.board-host { position: relative; }
 
 /* Online panel: expand on mobile so the invitation code / join form is reachable. */
 @media (max-width: 880px) {

@@ -20,6 +20,7 @@ class FakeView implements ChessView {
   clearSelection(): void {}
   highlightFromSquare(_sq: Square): void {}
   setHint(_from: Square, _to: Square): void {}
+  setFlipped(_flipped: boolean): void {}
 }
 
 class CountingAI implements AIAdapter {

@@ -67,6 +67,7 @@ export class Board3D {
   private theme: ThemeData;
   private rafHandle = 0;
   private initTimer: number | null = null;
+  private flipped = false;
   private resizeObs?: ResizeObserver;
   private disposed = false;
   private selectable: Side | null = null;
@@ -129,6 +130,15 @@ export class Board3D {
     // is NOT part of the palette — keeping it that way prevents theme switches
     // from disposing the frame's still-in-use material.
     this.pieceMaterials = pieceMaterialPalette(this.theme);
+  }
+
+  setFlipped(flipped: boolean): void {
+    this.flipped = flipped;
+    if (!this.camera || !this.controls) return;
+    const z = flipped ? -6.75 : 6.75;
+    this.camera.position.set(0, 4.15, z);
+    this.controls.target.set(0, 0.12, 0);
+    this.controls.update();
   }
 
   mount(theme: ThemeData): void {
@@ -213,7 +223,8 @@ export class Board3D {
     // vertically; combined with PIECE_VISUAL_SCALE in makePieceMesh
     // this gives a noticeably larger, more dominant 3D view.
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-    this.camera.position.set(0, 4.15, 6.75);
+    const camZ = this.flipped ? -6.75 : 6.75;
+    this.camera.position.set(0, 4.15, camZ);
     this.camera.lookAt(0, 0.12, 0);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);

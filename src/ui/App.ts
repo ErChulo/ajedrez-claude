@@ -316,6 +316,10 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
     }
   }
 
+  function syncBoardFlip(): void {
+    root.dataset.boardFlipped = game?.store.get().humanSide === "black" ? "true" : "";
+  }
+
   function newGame(humanSide: Side) {
     setOnlineState("off");
     if (game) {
@@ -334,7 +338,8 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
     hookView(currentBoard.view);
     unsubscribeGame = game.subscribe((s) => onGameState(s));
     game.start();
-    moveList.setState((game as any).store.get());
+    syncBoardFlip();
+    moveList.setState(game.store.get());
   }
 
   function onGameState(s: GameState): void {
@@ -496,8 +501,9 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
         // have unset status otherwise.
         onGameEnd: (terminalStatus) => {
           if (!game) return;
-          const current = (game as any).store.get() as GameState;
-          (game as any).store.set({ ...current, status: terminalStatus, winner: seated });
+          if (terminalStatus === "waiting" || terminalStatus === "active") return;
+          const current = game.store.get();
+          game.store.set({ ...current, status: terminalStatus, winner: seated });
         },
       }),
     });
@@ -506,7 +512,8 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
     hookView(currentBoard.view);
     unsubscribeGame = game.subscribe((s) => onGameState(s));
     game.start();
-    moveList.setState((game as { store: { get: () => GameState } }).store.get());
+    syncBoardFlip();
+    moveList.setState(game.store.get());
     hideOnlinePanel();
     showSettingsCard();
     notice.innerHTML = `<span>Online</span><span style="color:var(--accent-2)">vs ${meta.whitePlayerId === uid ? meta.blackDisplayName ?? "?" : meta.whiteDisplayName}</span>`;

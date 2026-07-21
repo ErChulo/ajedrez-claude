@@ -43,6 +43,8 @@ export interface ChessView {
   highlightFromSquare(sq: Square): void;
   /** Highlight the engine-recommended from→to squares. Auto-hides after 2.5s. */
   setHint(from: Square, to: Square): void;
+  /** Flip the board so the given side is at the bottom (black's perspective). */
+  setFlipped(flipped: boolean): void;
 }
 
 export interface GameConfig {
@@ -182,6 +184,7 @@ export class Game {
   }
 
   start(): void {
+    this.view.setFlipped(this.humanSide === "black");
     this.view.setSelectable(this.engine.turn() === this.humanSide ? this.humanSide : null);
     this.view.clearSelection();
     sounds.play("gameStart");
@@ -330,6 +333,7 @@ export class Game {
    */
   setView(view: ChessView): void {
     this.view = view;
+    this.view.setFlipped(this.humanSide === "black");
     // Defensive: a freshly-mounted view has no .selected / .target
     // classes left over from a previous mount, so clearSelection()
     // is a no-op on first call. If a future view implementation

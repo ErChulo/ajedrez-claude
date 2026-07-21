@@ -229,14 +229,9 @@ async function renderLobbyList(root: HTMLElement, h: OnlinePanelHandlers): Promi
 }
 
 function alertJoinError(e: unknown): void {
-  // Tiny ephemeral toast — kept inside the panel to avoid coupling to the
-  // rest of the doc's modals.
   const t = document.createElement("div");
   t.className = "toast err";
   t.textContent = messageOf(e);
-  t.style.position = "fixed";
-  t.style.bottom = "16px";
-  t.style.right = "16px";
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
 }
