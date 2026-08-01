@@ -353,6 +353,18 @@ export class Board3D {
       if (!this.scene) { this.resolvers.delete(resolve); return resolve(); }
       const group = this.pieceMeshes.get(rec.from);
       if (!group) { this.resolvers.delete(resolve); return resolve(); }
+      const isCapture = kind.kind === "capture" || kind.kind === "enpassant" || kind.kind === "promote";
+      if (isCapture) {
+        const capturedSq =
+          kind.kind === "enpassant"
+            ? (rec.to[0] + rec.from[1]) as Square
+            : rec.to;
+        const captured = this.pieceMeshes.get(capturedSq);
+        if (captured) {
+          this.disposePieceGroup(captured);
+          this.pieceMeshes.delete(capturedSq);
+        }
+      }
       group.position.x = worldX(rec.to);
       group.position.z = worldZ(rec.to);
       (group.userData as { square: Square }).square = rec.to; // v1.13: keep raycast data current after a move.
@@ -618,6 +630,7 @@ export class Board3D {
   }
 
   private disposePieceGroup(group: THREE.Group): void {
+    this.scene?.remove(group);
     group.traverse((c) => {
       const node = c as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
       node.geometry?.dispose();
