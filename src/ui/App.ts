@@ -280,6 +280,7 @@ export async function mountApp(root: HTMLElement, _opts: { initialTheme: ThemeNa
   function mountBoard(type: RenderMode): ChessView {
     if (currentBoard) { currentBoard.destroy(); currentBoard = null; }
     boardHost.innerHTML = "";
+    boardHost.dataset.boardMode = type;
     syncBoardSize();
     if (type === "2d") {
       const b = new Board2D(boardHost);

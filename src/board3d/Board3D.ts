@@ -739,24 +739,32 @@ export class Board3D {
     this.handleSquareClick(sq, e);
   }
 
-  /**
-   * Raycast the pointer against piece Groups + square meshes. Walks the
-   * parent chain on each hit so any child mesh (e.g. ornament child meshes)
-   * can be attributed to the parent Group's `userData.square`. Returns the
-   * nearest hit's square, or null if no hit.
-   */
   private raycastSquare(e: PointerEvent): Square | null {
     const canvas = this.renderer!.domElement;
     const rect = canvas.getBoundingClientRect();
     this.pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointerNDC, this.camera!);
-    const targets: THREE.Object3D[] = [];
-    for (const [, g] of this.pieceMeshes) targets.push(g);
-    for (const [, s] of this.squares) targets.push(s);
-    const hits = this.raycaster.intersectObjects(targets, true);
-    if (hits.length === 0) return null;
-    for (const h of hits) {
+
+    const squareTargets: THREE.Object3D[] = [];
+    for (const [, s] of this.squares) squareTargets.push(s);
+    const squareHits = this.raycaster.intersectObjects(squareTargets, true);
+    if (squareHits.length > 0) {
+      for (const h of squareHits) {
+        let obj: THREE.Object3D | null = h.object;
+        while (obj) {
+          const ud = obj.userData as { square?: Square } | undefined;
+          if (ud && typeof ud.square === "string") return ud.square as Square;
+          obj = obj.parent;
+        }
+      }
+    }
+
+    const pieceTargets: THREE.Object3D[] = [];
+    for (const [, g] of this.pieceMeshes) pieceTargets.push(g);
+    const pieceHits = this.raycaster.intersectObjects(pieceTargets, true);
+    if (pieceHits.length === 0) return null;
+    for (const h of pieceHits) {
       let obj: THREE.Object3D | null = h.object;
       while (obj) {
         const ud = obj.userData as { square?: Square } | undefined;
@@ -768,18 +776,28 @@ export class Board3D {
   }
 
   private handleSquareClick(sq: Square, _e: PointerEvent): void {
-    // No selection — first click is "select this square" (Game decides if
-    // legal via selectSquare; flashes illegal if not).
-    if (this.selectedSq === null) {
+    if (this.selectedSq === null || this.selectedSq === sq || this.canControlSide(sq)) {
       this.onSelect?.(sq);
       return;
     }
-    // Already selected — treat as a move attempt from selection → clicked sq.
     const from = this.selectedSq;
-    // Don't optimistically clear `selectedSq` here: Game.attemptMove() may
-    // re-call setLegalTargets() with a new origin (reselect) or
-    // clearSelection() on illegal moves. Trust Game to own the truth.
     this.onMoveAttempt?.({ from, to: sq });
+  }
+
+  private canControlSide(sq: Square): boolean {
+    const sel = this.selectable;
+    if (!sel) return false;
+    const group = this.pieceMeshes.get(sq);
+    if (!group) return false;
+    let symbol: PieceSymbol | undefined;
+    group.traverse((c) => {
+      if (symbol) return;
+      const next = (c.userData as { symbol?: PieceSymbol }).symbol;
+      if (next) symbol = next;
+    });
+    if (!symbol) return false;
+    const isWhite = symbol === symbol.toUpperCase();
+    return (sel === "white" && isWhite) || (sel === "black" && !isWhite);
   }
 }
 
