@@ -149,6 +149,12 @@ export class Game {
 
   /** Load a server-supplied FEN into the engine (used when joining an in-progress game). */
   loadFEN(fen: string): void {
+    // Normalize legacy/empty sentinels from the server to the canonical
+    // starting FEN; otherwise chess.js silently rejects them as invalid
+    // and loadFEN becomes a no-op on fresh games.
+    if (fen === "start" || fen.trim() === "") {
+      fen = ChessEngine.standard().fen();
+    }
     // engine.reset() doesn't throw on invalid FEN — chess.js silently
     // falls back to the starting position if the FEN is unparseable. We
     // detect that by comparing post-load FEN to the input FEN; if they
@@ -185,6 +191,7 @@ export class Game {
 
   start(): void {
     this.view.setFlipped(this.humanSide === "black");
+    this.view.redraw(this.boardMap());
     this.view.setSelectable(this.engine.turn() === this.humanSide ? this.humanSide : null);
     this.view.clearSelection();
     sounds.play("gameStart");

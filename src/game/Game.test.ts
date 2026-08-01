@@ -7,8 +7,11 @@ import type { AIDifficulty, ApplyMoveInput, MoveRecord, PieceSymbol, Promotion, 
 
 class FakeView implements ChessView {
   public selectableCalls: (Side | null)[] = [];
+  public events: string[] = [];
 
-  redraw(_board: Record<Square, PieceSymbol | null>): void {}
+  redraw(_board: Record<Square, PieceSymbol | null>): void {
+    this.events.push("redraw");
+  }
   async animateMove(_rec: MoveRecord, _animate: { kind: "move" | "capture" | "castle" | "enpassant" | "promote" }): Promise<void> {}
   async animateRookMove(_from: Square, _to: Square): Promise<void> {}
   setSelectable(side: Side | null): void { this.selectableCalls.push(side); }
@@ -20,7 +23,9 @@ class FakeView implements ChessView {
   clearSelection(): void {}
   highlightFromSquare(_sq: Square): void {}
   setHint(_from: Square, _to: Square): void {}
-  setFlipped(_flipped: boolean): void {}
+  setFlipped(flipped: boolean): void {
+    this.events.push(`flip:${flipped}`);
+  }
 }
 
 class CountingAI implements AIAdapter {
@@ -92,6 +97,29 @@ describe("Game online sink behavior", () => {
 
     expect(ai.requestCount).toBe(0);
     expect(view.selectableCalls.at(-1)).toBeNull();
+    game.shutdown();
+  });
+
+  it("repaints the board after flipping it to the black side on start()", () => {
+    const view = new FakeView();
+    const ai = new CountingAI();
+    const sink = new PassthroughOnlineSink();
+    const game = new Game(view, {
+      humanSide: "black",
+      aiDifficulty: "intermediate",
+      ai,
+      initialSeconds: 60,
+      incrementSeconds: 0,
+      sink,
+    });
+    sink.bind(game);
+
+    game.start();
+
+    const lastFlip = view.events.lastIndexOf("flip:true");
+    const lastRedraw = view.events.lastIndexOf("redraw");
+    expect(lastFlip).toBeGreaterThanOrEqual(0);
+    expect(lastRedraw).toBeGreaterThan(lastFlip);
     game.shutdown();
   });
 });
