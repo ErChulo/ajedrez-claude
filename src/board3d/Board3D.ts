@@ -68,6 +68,11 @@ export class Board3D {
   private rafHandle = 0;
   private initTimer: number | null = null;
   private flipped = false;
+  // Unit vector from the orbit target back toward the default camera
+  // position, computed at mount. Kept here so applyZoomLimits can frame
+  // the board along the same view direction the user starts on (and that
+  // setFlipped mirrors to the opposite side).
+  private mountBaseDir = new THREE.Vector3(0, 0.565, 0.825);
   private resizeObs?: ResizeObserver;
   private disposed = false;
   private selectable: Side | null = null;
@@ -135,9 +140,14 @@ export class Board3D {
   setFlipped(flipped: boolean): void {
     this.flipped = flipped;
     if (!this.camera || !this.controls) return;
-    const z = flipped ? -6.75 : 6.75;
-    this.camera.position.set(0, 4.15, z);
+    // Mirror the default view to the opposite side, sitting at the
+    // current fit distance so the whole board stays in frame.
+    this.mountBaseDir.set(0, 0.565, flipped ? -0.825 : 0.825).normalize();
+    const dir = this.mountBaseDir.clone();
+    const dist = this.computeFitDistance() * 1.12;
     this.controls.target.set(0, 0.12, 0);
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, dist);
+    this.camera.lookAt(this.controls.target);
     this.controls.update();
   }
 
@@ -152,16 +162,13 @@ export class Board3D {
     this.host.setAttribute("data-3d-state", "loading");
     this.host.dataset.pieceStyle = this.pieceStyle;
     this.host.dataset.pieceAssets = this.pieceStyle === "asset-pack" || this.pieceStyle === "staunton" ? "loading" : "ready";
-    // Always render the 3D board as a perfect 1:1 square. The host
-    // .board-3d-host has `aspect-ratio: 1/1` (see style.css), but on
-    // first mount the layout may not have settled yet (e.g. chrome
-    // bar collapse on iOS). Taking min(w,h) when sizing the drawing
-    // buffer AND updateStyle=true ensures the canvas's CSS width/height
-    // track the host — without updateStyle, browsers leave the canvas
-    // at its default 300x150 CSS size regardless of the drawing buffer.
-    const rawW = this.host.clientWidth || 800;
-    const rawH = this.host.clientHeight || 600;
-    const size = Math.max(1, Math.min(rawW, rawH));
+    // The host .board-3d-host now fills the whole .board-host area (not a
+    // 1:1 square — see style.css), so size the WebGL drawing buffer to
+    // the actual host width × height. updateStyle=true also drives the
+    // canvas's CSS dimensions; without it browsers leave the canvas at
+    // its default 300×150 CSS box regardless of the drawing buffer.
+    const initW = this.host.clientWidth || 800;
+    const initH = this.host.clientHeight || 600;
 
     this.initTimer = window.setTimeout(() => {
       this.initTimer = null;
@@ -169,7 +176,7 @@ export class Board3D {
       try {
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.setSize(size, size, true);
+        this.renderer.setSize(initW, initH, true);
         setupRenderer(this.renderer);
         this.host.appendChild(this.renderer.domElement);
         statusBanner.remove();
@@ -207,33 +214,34 @@ export class Board3D {
     this.scene = new THREE.Scene();
     setupLighting(this.scene, this.renderer);
 
-    // v1.11: camera lowered + pulled back (was 0, 6, 6) — the high
-    // top-down angle hid piece silhouettes; the lower (0, 4.5, 7.5)
-    // angle shows more of the side profile so king crosses, queen
-    // coronets, bishop mitres, rook merlons, and knight muzzles read
-    // at a glance. Pulled back along z so the larger ornaments don't
-    // crowd the right/left edges when 32 pieces are all on-screen.
-    //
-    // v1.15: aspect is locked to 1:1 at mount (the prior width/height
-    // aspect matched only when the .board-3d-host box resolved to a
-    // square — which was the common case but not guaranteed across
-    // every browser/layout edge case, especially on iOS where the URL
-    // bar collapse can land mid-mount). Camera moved slightly closer
-    // (4.5, 7.5) → (3.6, 6.0) so the board fills more of the canvas
-    // vertically; combined with PIECE_VISUAL_SCALE in makePieceMesh
-    // this gives a noticeably larger, more dominant 3D view.
-    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-    const camZ = this.flipped ? -6.75 : 6.75;
-    this.camera.position.set(0, 4.15, camZ);
-    this.camera.lookAt(0, 0.12, 0);
-
+    // The 3D canvas now fills the whole .board-host (non-square), so the
+    // projection aspect must match the host width/height — otherwise the
+    // scene stretches. The default view sits at the "everything fits"
+    // distance for the current aspect with a comfortable margin, and
+    // controls.minDistance stops the user from zooming in past the point
+    // where board corners leave the frustum (the old hard-coded 4.6 let
+    // the near edge drop below the frame).
+    const mountAspect = initW / initH;
+    this.camera = new THREE.PerspectiveCamera(40, mountAspect, 0.1, 100);
+    const dirY = 4.15;
+    const dirZ = this.flipped ? -6.75 : 6.75;
+    this.mountBaseDir = new THREE.Vector3(0, dirY, dirZ).normalize();
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.target.set(0, 0.12, 0);
-    this.controls.minDistance = 4.6;
-    this.controls.maxDistance = 13;
+    // Frame the camera at the old default along mountBaseDir first so
+    // computeFitDistance has a sane live direction, then place it at the
+    // exact "everything fits" distance for the current aspect.
+    this.camera.position.copy(this.controls.target).addScaledVector(this.mountBaseDir, Math.hypot(dirY, dirZ));
+    this.camera.lookAt(this.controls.target);
+    const fitDist = this.computeFitDistance();
+    const defaultDist = fitDist * 1.12;
+    this.camera.position.copy(this.controls.target).addScaledVector(this.mountBaseDir, defaultDist);
+    this.camera.lookAt(this.controls.target);
+    this.controls.maxDistance = 16;
     this.controls.maxPolarAngle = Math.PI / 2.05;
+    this.applyZoomLimits();
 
     this.buildBoard();
     if (this.boardSnap.size > 0) this.rebuildPiecesFromSnapshot();
@@ -686,32 +694,90 @@ export class Board3D {
   private handleResize(): void {
     if (!this.renderer || !this.camera) return;
     const w = this.host.clientWidth || 800;
-    const h = this.host.clientHeight || 800;
-    // v1.17: ALWAYS render the 3D board as a perfect 1:1 square. The
-    // .board-3d-host CSS rule has `aspect-ratio: 1/1`, which makes the
-    // host box square on every layout — but if a parent layout edge
-    // case (e.g. an iOS URL bar transition rounding error) ever
-    // resolves a non-square host, we'd otherwise stretch the board
-    // horizontally or vertically. Picking min(w,h) for both axes
-    // guarantees a square canvas AND guarantees we never overflow
-    // either dimension. camera.aspect=1 then keeps the projection
-    // matrix in lockstep with the renderer.
-    //
-    // updateStyle=true now also resizes the canvas's CSS dimensions
-    // (without it, browsers leave the canvas at its default 300x150
-    // CSS box while the drawing buffer is the requested `size` — the
-    // board appears tiny and pinned to the upper-left). Combined with
-    // the CSS rule `.board-3d-host canvas { width: 100%; height: 100% }`
-    // in style.css this is belt-and-suspenders: even if a future
-    // refactor drops updateStyle, the canvas still fills the host.
-    const size = Math.max(1, Math.min(w, h));
-    this.renderer.setSize(size, size, true);
-    this.camera.aspect = 1;
+    const h = this.host.clientHeight || 600;
+    // The 3D canvas now fills the whole .board-host real estate (not a
+    // forced 1:1 square), so size the drawing buffer to the host width ×
+    // height and keep the projection aspect in lockstep. updateStyle=true
+    // also drives the canvas's CSS dimensions (without it browsers leave
+    // the canvas at its default 300×150 CSS box regardless of the buffer).
+    // The CSS rule `.board-3d-host canvas { width: 100%; height: 100% }`
+    // is belt-and-suspenders for that.
+    this.renderer.setSize(w, h, true);
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     // Refresh pixel ratio in case the window moved between displays
     // with different DPRs (dragging a browser window from a MacBook
     // screen onto an external 4K monitor triggers this on macOS).
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // The board fit depends on the new aspect ratio, so recompute zoom
+    // limits and push the camera back out if the user was zoomed inside
+    // the new "always whole board" floor.
+    this.applyZoomLimits();
+  }
+
+  /**
+   * Smallest camera distance (from the orbit target) at which all four
+   * board corners (±size/2 on x and z, sitting in the y=0 plane) still
+   * project inside the frustum, for the CURRENT camera aspect + tilt.
+   * Binary-searched because the corners are off-axis (camera is tilted
+   * down), so neither the horizontal nor vertical half-FOV alone gives
+   * the boundary — projecting the actual corners does. Handles aspect
+   * ratio and the flipped side automatically because it uses the live
+   * camera matrix.
+   */
+  private computeFitDistance(): number {
+    if (!this.camera || !this.controls) return 7;
+    const half = BOARD.size / 2;
+    const target = this.controls.target;
+    const dir = new THREE.Vector3().subVectors(this.camera.position, target).normalize();
+    if (dir.lengthSq() < 1e-6) dir.copy(this.mountBaseDir);
+    const cam = this.camera;
+    const tmp = new THREE.Vector3();
+    const fits = (d: number): boolean => {
+      cam.position.copy(target).addScaledVector(dir, d);
+      cam.lookAt(target);
+      cam.updateMatrixWorld(true);
+      for (const zs of [-half, half]) for (const xs of [-half, half]) {
+        tmp.set(xs, 0, zs);
+        tmp.project(cam);
+        if (tmp.x < -1 || tmp.x > 1 || tmp.y < -1 || tmp.y > 1) return false;
+      }
+      return true;
+    };
+    let lo = 1;
+    let hi = 40;
+    // At lo most of the board is outside; at hi all of it is inside.
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) hi = mid; else lo = mid;
+    }
+    return hi;
+  }
+
+  /**
+   * Frame the whole board at the default view and clamp zoom-in so the
+   * board never gets clipped. minDistance is set to the fit floor (with
+   * a small margin); if the user is currently inside that floor (e.g.
+   * after a resize shrinks the view), the camera is pushed back out to
+   * it rather than leaving them looking at a cropped board.
+   */
+  private applyZoomLimits(): void {
+    if (!this.camera || !this.controls) return;
+    const fit = this.computeFitDistance();
+    const minDist = fit * 1.06;
+    this.controls.minDistance = minDist;
+    // computeFitDistance() moved the camera around along the view
+    // direction; restore it to the live direction at the live distance,
+    // but never closer than the new floor (stops a resize from leaving
+    // the user looking at a cropped board).
+    const target = this.controls.target;
+    const dir = new THREE.Vector3().subVectors(this.camera.position, target);
+    const cur = dir.length();
+    const wantDir = dir.lengthSq() > 1e-6 ? dir.normalize() : this.mountBaseDir.clone();
+    const dist = Math.max(cur, minDist);
+    this.camera.position.copy(target).addScaledVector(wantDir, dist);
+    this.camera.lookAt(target);
+    this.controls.update();
   }
 
   // ---- v1.13: pointer / raycaster click chain ----
