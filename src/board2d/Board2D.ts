@@ -320,6 +320,12 @@ export class Board2D {
         },
       });
     });
+    // Mirror Board3D.applyMoveToSnapshot: keep boardSnap current after every
+    // move so a later setPieceStyle()/redraw re-emits the moved/promoted/
+    // captured pieces instead of reverting to a stale pre-move snapshot.
+    // Using rec.promotion (not the DOM symbol) means the snapshot already
+    // reflects the promoted piece before the promotion tween below runs.
+    this.applyMoveToSnapshot(rec, animate.kind);
     // Promotion transform — runs in the outer async scope where `await` is
     // legal. Awaits the appear tween so Game.executeMove's `await
     // animateMove` doesn't return with isProcessingMove=false while the
@@ -344,6 +350,9 @@ export class Board2D {
 
   animateRookMove(from: Square, to: Square): Promise<void> {
     return new Promise((resolve) => {
+      // Mirror Board3D: keep boardSnap in sync even if there is no DOM node
+      // to tween (e.g. a re-render or toggle cleared pieces mid-move).
+      this.applyRookToSnapshot(from, to);
       const el = this.pieces.get(from);
       const dst = this.squares.get(to);
       if (!el || !dst) return resolve();
@@ -366,6 +375,38 @@ export class Board2D {
         }
       });
     });
+  }
+
+  // v1.19.1 (mirror Board3D.applyMoveToSnapshot): track the logical board
+  // position in boardSnap after every animated move so a later style-swap or
+  // redraw re-emits the live position rather than reverting to a stale one.
+  // rec.promotion (if any) is used at the destination so the snapshot already
+  // shows the promoted piece. En-passant captures a pawn on a square OTHER
+  // than rec.to; castling also relocates the rook.
+  private applyMoveToSnapshot(rec: MoveRecord, kind: "move" | "capture" | "castle" | "enpassant" | "promote"): void {
+    this.boardSnap.delete(rec.from);
+    this.boardSnap.set(rec.to, rec.promotion ?? rec.piece);
+    if (kind === "enpassant") {
+      const capturedSq = (rec.to[0] + rec.from[1]) as Square;
+      this.boardSnap.delete(capturedSq);
+    }
+    if (kind === "castle") {
+      const rookFrom = rec.to === "g1" ? "h1" : rec.to === "c1" ? "a1" : rec.to === "g8" ? "h8" : "a8";
+      const rookTo = rec.to === "g1" ? "f1" : rec.to === "c1" ? "d1" : rec.to === "g8" ? "f8" : "d8";
+      const rookPiece = this.boardSnap.get(rookFrom);
+      if (rookPiece) {
+        this.boardSnap.delete(rookFrom);
+        this.boardSnap.set(rookTo, rookPiece);
+      }
+    }
+  }
+
+  private applyRookToSnapshot(from: Square, to: Square): void {
+    const rook = this.boardSnap.get(from);
+    if (rook) {
+      this.boardSnap.delete(from);
+      this.boardSnap.set(to, rook);
+    }
   }
 
   setSelectable(side: Side | null): void {
@@ -437,7 +478,12 @@ export class Board2D {
 
       const options: Promotion[] = ["q", "r", "b", "n"];
       const symFor: Record<Promotion, PieceSymbol> = { q: "Q", r: "R", b: "B", n: "N" };
-      const inPlaceOf: "white" | "black" = this.state.selectable ?? "white";
+      // Derive the mover's color from the pawn being promoted (live DOM state)
+      // rather than `state.selectable` — attemptMove nulls selectable before the
+      // picker is shown, so `?? "white"` always rendered white pieces even when
+      // Black was promoting.
+      const pawnSym = this.pieces.get(_from)?.dataset.piece ?? "P";
+      const inPlaceOf: "white" | "black" = pawnSym === pawnSym.toUpperCase() ? "white" : "black";
 
       options.forEach((p) => {
         const btn = document.createElement("button");

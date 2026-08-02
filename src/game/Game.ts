@@ -293,6 +293,13 @@ export class Game {
   }
 
   async attemptMove(input: ApplyMoveInput): Promise<void> {
+    // Guard the ENTIRE human path — including the awaitPromotion picker — so a
+    // fast second click (e.g. during the promotion picker) can't re-enter and
+    // double-fire executeMove + the online write. isProcessingMove is also
+    // flipped inside executeMove, but awaiting the picker falls THROUGH that
+    // window — so we own the outer frame here and always reset in finally.
+    // (executeMove itself stays unguarded so the AI's forced response can
+    // recurse while an animation chain is in flight — see its own comment.)
     if (this.isProcessingMove) return;
     if (this.engine.snapshot().status !== "playing") return;
     if (this.engine.turn() !== this.humanSide) return;
@@ -307,19 +314,24 @@ export class Game {
       return;
     }
     const isPromo = this.needsPromotion({ from: input.from, to: input.to });
-    if (isPromo) {
-      this.view.setSelectable(null);
-      const promo = await this.view.awaitPromotion(input.from, input.to);
-      if (!promo) {
-        this.view.setSelectable(this.humanSide);
-        sounds.play("illegal");
-        return;
+    try {
+      this.isProcessingMove = true;
+      if (isPromo) {
+        this.view.setSelectable(null);
+        const promo = await this.view.awaitPromotion(input.from, input.to);
+        if (!promo) {
+          this.view.setSelectable(this.humanSide);
+          sounds.play("illegal");
+          return;
+        }
+        input = { ...input, promotion: promo };
       }
-      input = { ...input, promotion: promo };
+      // Round-trip through MoveSink so AI goes through LocalSink (immediate apply)
+      // and online goes through OnlineSink (apply locally + write to Supabase).
+      await this.sink.submitMove(input);
+    } finally {
+      this.isProcessingMove = false;
     }
-    // Round-trip through MoveSink so AI goes through LocalSink (immediate apply)
-    // and online goes through OnlineSink (apply locally + write to Supabase).
-    await this.sink.submitMove(input);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { sounds } from "@/audio/sounds";
 import type { AIAdapter } from "@/ai/stockfish";
 import { Game, type ChessView } from "./Game";
@@ -120,6 +120,53 @@ describe("Game online sink behavior", () => {
     const lastRedraw = view.events.lastIndexOf("redraw");
     expect(lastFlip).toBeGreaterThanOrEqual(0);
     expect(lastRedraw).toBeGreaterThan(lastFlip);
+    game.shutdown();
+  });
+
+  it("ignores a second move attempt while the promotion picker is awaiting (Bug D)", async () => {
+    // Regression: isProcessingMove was only set inside executeMove, so it was
+    // false during `await awaitPromotion` — a fast second click re-entered
+    // attemptMove, double-firing executeMove + the online write and corrupting
+    // the move sequence (freeze at the promotion). After the fix, the whole
+    // human path is guarded end-to-end.
+    let resolvePromo!: (v: Promotion | null) => void;
+    const view = new FakeView();
+    (view as any).awaitPromotion = () =>
+      new Promise<Promotion | null>((r) => { resolvePromo = r; });
+    const game = new Game(view, {
+      humanSide: "white",
+      aiDifficulty: "intermediate",
+      ai: new CountingAI(),
+      initialSeconds: 60,
+      incrementSeconds: 0,
+    });
+    // White pawn on e7; e8 empty and ready to promote.
+    game.loadFEN("8/4P3/8/8/8/8/8/4K1k1 w - - 0 1");
+    game.start();
+    const execSpy = vi.spyOn(game as any, "executeMove");
+
+    let promoCalls = 0;
+    const origAwait = (view as any).awaitPromotion;
+    (view as any).awaitPromotion = () => {
+      promoCalls++;
+      return origAwait();
+    };
+
+    // First attempt enters the picker and awaits.
+    const first = game.attemptMove({ from: "e7", to: "e8", promotion: "q" });
+    await Promise.resolve();
+
+    // A second attempt during the picker await must be a no-op: it must NOT
+    // open a second picker (the whole human path is guarded end-to-end).
+    await game.attemptMove({ from: "e7", to: "e8", promotion: "q" });
+    expect(promoCalls).toBe(1);
+    expect(execSpy).toHaveBeenCalledTimes(0);
+
+    // Resolve the (single) picker -> the original move completes.
+    resolvePromo("q");
+    await first;
+    expect(promoCalls).toBe(1); // picker invoked only once
+    expect(execSpy).toHaveBeenCalledTimes(1);
     game.shutdown();
   });
 });
