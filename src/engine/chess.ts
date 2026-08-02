@@ -27,6 +27,11 @@ function promotionSymbolFor(k: Promotion, sideIsWhite: boolean): PieceSymbol {
   return sideIsWhite ? capital : capital.toLowerCase() as PieceSymbol;
 }
 
+function pieceSymbolFor(kind: string, sideIsWhite: boolean): PieceSymbol {
+  const capital = kind.toUpperCase() as PieceSymbol;
+  return sideIsWhite ? capital : capital.toLowerCase() as PieceSymbol;
+}
+
 export class EngineError extends Error {
   constructor(message: string, public code: "illegal" | "wrong-turn" | "invalid-input") {
     super(message);
@@ -202,8 +207,8 @@ export class ChessEngine {
     return {
       from: m.from as Square,
       to: m.to as Square,
-      piece: m.piece as PieceSymbol,
-      captured: m.captured ? (m.captured as PieceSymbol) : undefined,
+      piece: pieceSymbolFor(m.piece, m.color === "w"),
+      captured: m.captured ? pieceSymbolFor(m.captured, m.color !== "w") : undefined,
       promotion: m.promotion ? (promotionSymbolFor(promotionFromMove(m)!, m.color === "w")) : undefined,
       san: m.san,
       lan: `${m.from}${m.to}${m.promotion ?? ""}`,

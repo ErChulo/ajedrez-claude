@@ -401,14 +401,14 @@ export class Board3D {
 
       const k = kind.kind;
       const isCapture = k === "capture" || k === "enpassant" || k === "promote";
-      let captured: THREE.Group | undefined;
-      if (isCapture) {
-        const capturedSq = k === "enpassant" ? (rec.to[0] + rec.from[1]) as Square : rec.to;
-        captured = this.pieceMeshes.get(capturedSq);
-      }
+      const capturedSq = isCapture
+        ? (k === "enpassant" ? (rec.to[0] + rec.from[1]) as Square : rec.to)
+        : null;
+      const captured = capturedSq ? this.pieceMeshes.get(capturedSq) : undefined;
 
       // 1) Capture tween: shrink the captured piece out, then dispose it.
-      if (captured) {
+      if (captured && capturedSq) {
+        this.pieceMeshes.delete(capturedSq);
         await this.tweenCaptureOut(captured);
         sounds.play("capture");
       }

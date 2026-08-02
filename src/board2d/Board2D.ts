@@ -260,7 +260,10 @@ export class Board2D {
     const fromEl = this.pieces.get(rec.from);
     const toEl = this.squares.get(rec.to);
     if (!fromEl || !toEl) return;
-    const existingCaptured = toEl.querySelector(".piece") as HTMLDivElement | null;
+    const capturedHost = animate.kind === "enpassant"
+      ? this.squares.get((rec.to[0] + rec.from[1]) as Square)
+      : toEl;
+    const existingCaptured = capturedHost?.querySelector(".piece") as HTMLDivElement | null;
     if (existingCaptured && animate.kind !== "castle") {
       // Mark the captured node as a ghost IMMEDIATELY so any later
       // querySelector(".piece") in this same frame, or in a redraw that

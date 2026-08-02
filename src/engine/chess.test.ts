@@ -80,6 +80,13 @@ describe("ChessEngine — FIDE rules", () => {
     expect(e.fen().split(" ")[0]).toContain("q");
   });
 
+  it("preserves capture color in move records", () => {
+    const e = new ChessEngine("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1");
+    const m = e.apply({ from: "e5", to: "d6" as Square });
+    expect(m.piece).toBe("P");
+    expect(m.captured).toBe("p");
+  });
+
   it("detects stalemate (black-to-move, all flight squares covered by queen, not in check)", () => {
     // Classic textbook position: white queen on g6, white king on f7, black king on h8. Black to move.
     // The white queen covers h7 and g7 (white king on f7 covers h8 indirectly via queen covers h7).

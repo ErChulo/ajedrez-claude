@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { sounds } from "@/audio/sounds";
 import type { AIAdapter } from "@/ai/stockfish";
+import { Board2D } from "@/board2d/Board2D";
 import { Game, type ChessView } from "./Game";
 import type { MoveSink } from "./MoveSink";
 import type { AIDifficulty, ApplyMoveInput, MoveRecord, PieceSymbol, Promotion, Side, Square } from "@/types";
@@ -171,12 +172,6 @@ describe("Game online sink behavior", () => {
   });
 
   it("animates a promotion with kind 'promote' carrying the chosen promotion piece", async () => {
-    // Regression for the observer-side promotion render: a promote move must
-    // reach View.animateMove with kind 'promote' AND rec.promotion set to the
-    // chosen piece, so both Board2D and Board3D paint the new piece (not a
-    // lingering pawn). The online row's `promotion` is forwarded by
-    // OnlineSink.applyMoveRow into executeMove; this test pins that contract
-    // at the Game layer independent of any network/Supabase plumbing.
     const recorded: { rec: MoveRecord; kind: string }[] = [];
     const view = new FakeView();
     (view as any).animateMove = (_rec: MoveRecord, animate: { kind: string }) => {
@@ -192,7 +187,6 @@ describe("Game online sink behavior", () => {
       initialSeconds: 60,
       incrementSeconds: 0,
     });
-    // White pawn on e7, ready to promote on e8 (empty).
     game.loadFEN("8/4P3/8/8/8/8/8/4K1k1 w - - 0 1");
     game.start();
     void game.attemptMove({ from: "e7", to: "e8" });
@@ -206,5 +200,33 @@ describe("Game online sink behavior", () => {
     expect(recorded[0].rec.from).toBe("e7");
     expect(recorded[0].rec.to).toBe("e8");
     game.shutdown();
+  });
+
+  it("renders a remote black promotion on the real 2D board", async () => {
+    document.body.innerHTML = "";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = new Board2D(host);
+    view.mount();
+
+    const game = new Game(view, {
+      humanSide: "white",
+      aiDifficulty: "intermediate",
+      ai: new CountingAI(),
+      initialSeconds: 60,
+      incrementSeconds: 0,
+      sink: new PassthroughOnlineSink(),
+    });
+    game.loadFEN("4K2k/8/8/8/8/8/3p4/8 b - - 0 1");
+    game.start();
+    await game.executeMove({ from: "d2", to: "d1", promotion: "q" }, { deferTurnControl: true });
+
+    const piece = host.querySelector('.square[data-square="d1"] .piece') as HTMLElement | null;
+    expect(piece).not.toBeNull();
+    expect(piece!.dataset.piece).toBe("q");
+    expect(piece!.innerHTML).toContain("b_Queen");
+    expect(host.querySelector('.square[data-square="d2"] .piece')).toBeNull();
+    game.shutdown();
+    view.destroy();
   });
 });

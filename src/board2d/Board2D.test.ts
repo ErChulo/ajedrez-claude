@@ -36,6 +36,11 @@ const BLACK_PROMO: MoveRecord = {
   san: "e1=Q", lan: "e2e1q", fen: "4k3/8/8/8/8/8/4p3/4K3 b - - 0 1", ply: 1,
 };
 
+const EN_PASSANT: MoveRecord = {
+  from: "e5", to: "d6", piece: "P", captured: "p",
+  san: "exd6 e.p.", lan: "e5d6", fen: "4k3/8/3P4/8/8/8/8/4K3 w - - 0 1", ply: 1,
+};
+
 describe("Board2D promotion (2D render bug)", () => {
   beforeEach(() => {
     sounds.setMuted(true);
@@ -84,5 +89,17 @@ describe("Board2D promotion (2D render bug)", () => {
     expect(piece1!.dataset.piece).toBe("q");
     expect(piece1!.innerHTML).toContain("b_Queen");
     expect(e2.querySelector(".piece")).toBeNull();
+  });
+
+  it("removes the captured pawn during en passant", async () => {
+    const b = mountBoard({ e5: "P", d5: "p" });
+    await b.animateMove(EN_PASSANT, { kind: "enpassant" });
+    await Promise.resolve();
+
+    expect(b["squares"].get("d5")!.querySelector(".piece")).toBeNull();
+    expect(b["squares"].get("e5")!.querySelector(".piece")).toBeNull();
+    const piece6 = b["squares"].get("d6")!.querySelector(".piece") as HTMLElement | null;
+    expect(piece6).not.toBeNull();
+    expect(piece6!.dataset.piece).toBe("P");
   });
 });
