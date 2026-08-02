@@ -68,7 +68,16 @@ describe("ChessEngine — FIDE rules", () => {
     const e = new ChessEngine("8/4P3/8/8/8/8/8/4K2k w - - 0 1");
     const m = e.apply({ from: "e7", to: "e8" as Square, promotion: "n" });
     expect(m.san).toMatch(/e8=N/);
+    expect(m.promotion).toBe("N");
     expect(e.fen().split(" ")[0]).toContain("N");
+  });
+
+  it("preserves black piece case in move records", () => {
+    const e = new ChessEngine("4K2k/8/8/8/8/8/3p4/8 b - - 0 1");
+    const m = e.apply({ from: "d2", to: "d1" as Square, promotion: "q" });
+    expect(m.piece).toBe("p");
+    expect(m.promotion).toBe("q");
+    expect(e.fen().split(" ")[0]).toContain("q");
   });
 
   it("detects stalemate (black-to-move, all flight squares covered by queen, not in check)", () => {

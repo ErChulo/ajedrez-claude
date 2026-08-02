@@ -202,8 +202,8 @@ export class ChessEngine {
     return {
       from: m.from as Square,
       to: m.to as Square,
-      piece: m.piece.toUpperCase() as PieceSymbol,
-      captured: m.captured ? (m.captured.toUpperCase() as PieceSymbol) : undefined,
+      piece: m.piece as PieceSymbol,
+      captured: m.captured ? (m.captured as PieceSymbol) : undefined,
       promotion: m.promotion ? (promotionSymbolFor(promotionFromMove(m)!, m.color === "w")) : undefined,
       san: m.san,
       lan: `${m.from}${m.to}${m.promotion ?? ""}`,
