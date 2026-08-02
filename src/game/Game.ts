@@ -124,6 +124,9 @@ export class Game {
         const r = this.inferRookCastle(rec);
         await this.view.animateRookMove(r.from, r.to);
       }
+      if (opts.deferTurnControl) {
+        this.view.redraw(this.boardMap());
+      }
       if (snap.inCheck) sounds.play("check");
 
       this.view.setLastMove(rec.from, rec.to);
