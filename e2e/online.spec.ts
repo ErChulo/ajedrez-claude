@@ -82,11 +82,12 @@ test.describe("online 2-player round-trip", () => {
     // Verify our generated code format (alphanumeric 6 chars, no ambiguous I/O/0/1).
     expect(joinCode).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
 
-    // 3. B enters the code and clicks Join. (No race here because the row
-    //    existed before B joined and B writes back via UPDATE.)
+    // 3. B enters the code and clicks the primary "Join" button (join-by-code).
+    //    The lobby list also renders ghost "Join" buttons per open-game row,
+    //    so we scope to button.primary to disambiguate.
     await pageB.fill('input[name="displayName"]', "Bravo");
     await pageB.fill('input[placeholder="ABC123"]', joinCode);
-    await pageB.locator('button:has-text("Join")').click();
+    await pageB.locator('button.primary:has-text("Join")').click();
 
     // 4. Both clients leave the online lobby and load the standard 2D board.
     //    The board is already visible behind the lobby, so wait for the app's
