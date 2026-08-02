@@ -147,6 +147,14 @@ If you see attempts to insert moves failing, double-check:
 - RLS is **enabled** (it is, by step 3).
 - The user is signed in anonymously (handled automatically)
 - The Security-Definer function `is_my_turn` exists (it's created by step 3).
+- The Security-Definer function `record_move` exists (it's created by step 3).
+  The client calls it via `supabase.rpc("record_move", …)` so a move is written
+  as a single atomic `INSERT moves` + `UPDATE games` transaction. `record_move`
+  is idempotent-safe to re-run: if a `429`/`network` drop ever left a `games` row
+  with a stale `turn`, the client also runs a `CAS`-repair self-heal on the next
+  5s heartbeat. If `record_move` is absent (e.g. an older schema), the client
+  transparently falls back to the two-statement REST write + retry, so the game
+  stays playable — atomic writes are a hardening, not a hard requirement.
 
 ---
 
