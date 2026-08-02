@@ -29,6 +29,7 @@ import {
   sendOnlineMove,
   fetchOnlineGame,
   fetchOnlineMoves,
+  selfHealGameRow,
   resignOnlineGame,
   type OnlineGameMeta,
   type OnlineMoveRow,
@@ -57,6 +58,10 @@ export class OnlineSink implements MoveSink {
   private reconciling = false;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  /** Server clock values we last anchored the local clock to; used to skip
+   *  redundant forceUpdate pulls from the 5s heartbeat (which would otherwise
+   *  snap the live-ticking clock back to stale turn-start values). */
+  private lastSynced: { turn: Side; status: OnlineGameMeta["status"]; whiteMs: number; blackMs: number } | null = null;
 
   constructor(private readonly opts: OnlineSinkOptions) {
     this.serverTurn = opts.initialMeta.turn;
@@ -168,11 +173,31 @@ export class OnlineSink implements MoveSink {
     if (!this.gameRef) return;
     this.serverTurn = row.turn;
     this.serverStatus = row.status;
-    this.gameRef.clock.forceUpdate(
-      row.whiteTimeRemainingMs,
-      row.blackTimeRemainingMs,
-      row.status === "active" ? row.turn : null,
-    );
+    // Only anchor the local clock when the server row actually moved. The
+    // 5s heartbeat reconciles against a row whose clock values are only
+    // refreshed when a move is written — so an unchanged pull would yank the
+    // receiver's live-ticking clock back to the turn-start value every 5 s
+    // (visible clock "jump-back"). Skipping identical pulls keeps drift
+    // correction on genuine UPDATE events only.
+    const changed =
+      !this.lastSynced ||
+      this.lastSynced.turn !== row.turn ||
+      this.lastSynced.status !== row.status ||
+      this.lastSynced.whiteMs !== row.whiteTimeRemainingMs ||
+      this.lastSynced.blackMs !== row.blackTimeRemainingMs;
+    if (changed) {
+      this.gameRef.clock.forceUpdate(
+        row.whiteTimeRemainingMs,
+        row.blackTimeRemainingMs,
+        row.status === "active" ? row.turn : null,
+      );
+      this.lastSynced = {
+        turn: row.turn,
+        status: row.status,
+        whiteMs: row.whiteTimeRemainingMs,
+        blackMs: row.blackTimeRemainingMs,
+      };
+    }
     this.syncTurnControlIfServerCaughtUp();
     if (row.status !== "waiting" && row.status !== "active") {
       this.opts.onGameEnd?.(row.status);
@@ -203,10 +228,38 @@ export class OnlineSink implements MoveSink {
       // 2) Re-anchor turn + clocks + terminal status to the server row.
       const row = await fetchOnlineGame(this.opts.gameId);
       if (row && !this.destroyed) this.syncFromServerMeta(row);
+      // 3) Self-heal: if the row is still behind the local engine after
+      //    replaying missed moves (e.g. a dropped games UPDATE left
+      //    games.turn stale), repair it with a CAS update. syncTurnControl
+      //    only fires when serverTurn === snap.turn, so an unhealed row leaves
+      //    the opponent frozen forever — this is the recovery path.
+      await this.maybeSelfHeal();
     } catch (e) {
       console.warn("OnlineSink: reconcile attempt failed", e);
     } finally {
       this.reconciling = false;
+    }
+  }
+
+  private async maybeSelfHeal(): Promise<void> {
+    if (!this.gameRef) return;
+    if (this.serverStatus !== "active") return;
+    const snap = this.gameRef.snapshot();
+    if (snap.status !== "playing") return;
+    if (this.serverTurn === snap.turn) return; // row already consistent
+    const repaired = await selfHealGameRow(this.opts.gameId, {
+      staleTurn: this.serverTurn,
+      turn: snap.turn,
+      fen: snap.fen,
+      pgn: snap.pgn,
+      status: snap.status === "playing" ? "active" : snap.status,
+    });
+    if (repaired) {
+      // Mirror the row we just corrected so turn-control flips immediately
+      // instead of waiting for the next reconcile (~5 s).
+      this.serverTurn = snap.turn;
+      this.serverStatus = snap.status === "playing" ? "active" : snap.status;
+      this.syncTurnControlIfServerCaughtUp();
     }
   }
 

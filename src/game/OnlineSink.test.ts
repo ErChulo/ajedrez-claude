@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   subscribeGame: vi.fn(),
   subscribeMoves: vi.fn(),
   sendOnlineMove: vi.fn(),
+  selfHealGameRow: vi.fn(),
   resignOnlineGame: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@/net/online", () => ({
   subscribeGame: (...args: unknown[]) => mocks.subscribeGame(...args),
   subscribeMoves: (...args: unknown[]) => mocks.subscribeMoves(...args),
   sendOnlineMove: (...args: unknown[]) => mocks.sendOnlineMove(...args),
+  selfHealGameRow: (...args: unknown[]) => mocks.selfHealGameRow(...args),
   resignOnlineGame: (...args: unknown[]) => mocks.resignOnlineGame(...args),
 }));
 
@@ -261,5 +263,60 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
 
     expect(mocks.fetchOnlineMoves).not.toHaveBeenCalled();
     expect(mocks.fetchOnlineGame).not.toHaveBeenCalled();
+  });
+
+  it("self-heals a stale games row (dropped UPDATE) and unfreezes the opponent", async () => {
+    // Corruption scenario from the freeze bug: the writer's `moves` INSERT
+    // landed but the `games` UPDATE was dropped, so games.turn never flipped
+    // while the local engine has already applied the move. syncTurnControl
+    // only flips when serverTurn === snap.turn -> without repair the opponent
+    // is frozen forever. The reconcile self-heal repairs the row.
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"), // stale server turn = "white"
+    });
+    sink.bind(stub as unknown as Game);
+    // No missed moves (the move IS in the table) — just the stale row.
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active")); // stale turn
+    mocks.selfHealGameRow.mockResolvedValueOnce(true);
+
+    await sink.reconcile();
+
+    // Self-heal was invoked with the corrected turn + current engine fen/pgn.
+    expect(mocks.selfHealGameRow).toHaveBeenCalledTimes(1);
+    expect(mocks.selfHealGameRow).toHaveBeenCalledWith("g1", {
+      staleTurn: "white",
+      turn: "black",
+      fen: "start",
+      pgn: "",
+      status: "active",
+    });
+    // ...and turn control flipped so the opponent can move again.
+    expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
+  });
+
+  it("does not snap the clock back on an unchanged 5s heartbeat pull", async () => {
+    // Bug B regression: syncFromServerMeta used to call clock.forceUpdate on
+    // EVERY pull, including the unchanged 5s heartbeat. The games-row clock
+    // values are only refreshed when a move is written, so an unchanged pull
+    // yanked the live-ticking clock back to the turn-start value every 5 s.
+    const stub = new StubGame("white", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "white",
+      initialMeta: makeMeta("white", "active"),
+    });
+    sink.bind(stub as unknown as Game);
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
+
+    await sink.reconcile();           // 1st pull: changed -> one forceUpdate
+    await sink.reconcile();           // 2nd pull: identical -> NO forceUpdate
+    await sink.reconcile();           // 3rd pull: identical -> NO forceUpdate
+
+    expect(stub.clockForceUpdates).toHaveLength(1);
   });
 });

@@ -60,3 +60,75 @@ create trigger games_touch_updated_at
 
 -- Realtime publication: in the dashboard OR via SQL:
 --   alter publication supabase_realtime add table games, moves;
+-- (Realtime UPDATEs on `games` speed up turn/clock recovery; the client polls
+--  as a backstop even if this publication step is skipped, so it is NOT required
+--  for correctness.)
+
+-- -----------------------------------------------------------------------------
+-- Online move submission (source of truth for OnlineSink.sendOnlineMove).
+-- -----------------------------------------------------------------------------
+-- WHY THIS EXISTS: the JS client writes a move as "INSERT moves THEN UPDATE
+-- games". Those are two separate REST round-trips; if the INSERT lands but the
+-- game-row UPDATE is dropped (transient 429 / network blip / tab-throttle),
+-- `games.turn` never flips and the OPPONENT is permanently frozen (its
+-- turn-control gate waits for a row update that never comes). The client's 5s
+-- reconcile can replay *moves*, but it cannot fabricate a games-row that was
+-- never written — so the freeze survives the heartbeat fix.
+--
+-- `record_move` performs INSERT + UPDATE inside ONE transaction, so the games
+-- row can never be left ahead of (or behind) the moves table. OnlineSink calls
+-- it via `sb.rpc`; if the function is absent (SQL not yet deployed to the live
+-- project), the client transparently falls back to INSERT+UPDATE-with-retry,
+-- and the same reconcile's CAS self-heal repairs any row corrupted before
+-- deployment. So: works without the SQL, strictly better with it.
+-- DEPLOY: paste the whole function into the Supabase SQL editor (no args).
+create or replace function record_move(
+  p_game_id            uuid,
+  p_by_player_id       uuid,
+  p_san                text,
+  p_from               text,
+  p_to                 text,
+  p_promotion          text,
+  p_fen_after          text,
+  p_pgn                text,
+  p_turn               text,
+  p_status             text,
+  p_white_time_remaining_ms bigint,
+  p_black_time_remaining_ms bigint,
+           p_last_move_at       timestamptz
+)
+returns int
+language plpgsql
+security definer
+as $$
+declare
+  v_next_idx int;
+begin
+  -- Server-side turn gate (replaces the moves-table RLS check inside the
+  -- function body; the RLS `is_my_turn` function is owned by this project).
+  if not is_my_turn(p_game_id) then
+    raise exception 'not_your_turn' using ERRCODE = '45000';
+  end if;
+  -- Compute the next move_index atomically (no client↔server race on
+  -- max(move_index) between a SELECT and the INSERT).
+  select max(move_index) into v_next_idx from moves where game_id = p_game_id;
+  v_next_idx := coalesce(v_next_idx, 0) + 1;
+  insert into moves (game_id, move_index, san, from_square, to_square,
+                     promotion, fen_after, by_player_id)
+  values (p_game_id, v_next_idx, p_san, p_from, p_to,
+          p_promotion, p_fen_after, p_by_player_id);
+  -- Turn flip + clock/commit happen in the SAME transaction as the INSERT:
+  -- either both persist or the whole statement rolls back (no half-written row).
+  update games
+    set fen                       = p_fen_after,
+        pgn                       = p_pgn,
+        status                    = p_status,
+        turn                      = p_turn,
+        white_time_remaining_ms   = p_white_time_remaining_ms,
+        black_time_remaining_ms   = p_black_time_remaining_ms,
+        last_move_at              = p_last_move_at,
+        updated_at                = now()
+  where id = p_game_id;
+  return v_next_idx;
+end;
+$$;

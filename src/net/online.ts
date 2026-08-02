@@ -12,6 +12,28 @@
 import { getSupabase } from "./supabase";
 import type { Side } from "@/types";
 
+// Whether the transactional `record_move` RPC is deployed on the live project.
+// Feature-detected once per page-load (null=untried, true=available, false=not
+// deployed -> use the REST INSERT+UPDATE-with-retry fallback in sendOnlineMove).
+let rpcAvailable: boolean | null = null;
+
+// Detects a "function does not exist" RPC error so the client can transparently
+// fall back to the REST write path when the SQL hasn't been applied yet.
+function isMissingRpcError(error: { code?: string; message?: string; details?: string } | null, status: number | undefined): boolean {
+  if (!error) return false;
+  const code = error.code;
+  const msg = (error.message ?? "").toLowerCase();
+  const details = (error.details ?? "").toLowerCase();
+  // postgrest/GoTrue: undefined_function (PG code 4288/4274) or a 404 when the
+  // rpc endpoint maps to a nonexistent function.
+  return (
+    code === "4288" ||
+    code === "4274" ||
+    code === "PG" && (msg.includes("does not exist") || msg.includes("record_move") || details.includes("record_move") || details.includes("does not exist")) ||
+    status === 404
+  );
+}
+
 export interface OnlineGameMeta {
   id: string;
   whitePlayerId: string | null;
@@ -146,6 +168,60 @@ export async function fetchOnlineGame(gameId: string): Promise<OnlineGameMeta | 
   return data ? rowToMeta(data) : null;
 }
 
+/**
+ * Self-heal for a games row left stale by a dropped games UPDATE (the root
+ * cause of the permanent online freeze): `games.turn` never flipped even though
+ * the `moves` table has the move. This is a single-statement CAS UPDATE, so it
+ * is atomic at the row level; the OnlineSink reconcile loop invokes it.
+ *
+ * Safety: the caller must be at the HEAD of the moves table — we verify its
+ * engine fen matches the latest move's `fen_after` before writing, so a
+ * catching-up client can NEVER clobber the row with stale data. The
+ * `eq("turn", staleTurn)` guard is a compare-and-swap: only the first repairer
+ * wins (others match 0 rows and no-op). Returns true if this caller repaired.
+ */
+export async function selfHealGameRow(
+  gameId: string,
+  opts: {
+    staleTurn: Side;
+    turn: Side;
+    fen: string;
+    pgn: string;
+    status: OnlineGameMeta["status"];
+  },
+): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb) return false;
+  if (opts.staleTurn === opts.turn) return false; // already consistent
+  const { data: latest } = await sb.from("moves")
+    .select("fen_after")
+    .eq("game_id", gameId)
+    .order("move_index", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // If the moves table's head doesn't match the caller's engine, the caller
+  // isn't authoritative yet — wait for the next reconcile to re-apply.
+  if (latest && latest.fen_after !== opts.fen) return false;
+  const { data, error } = await sb.from("games")
+    .update({
+      fen: opts.fen,
+      pgn: opts.pgn,
+      status: opts.status,
+      turn: opts.turn,
+    })
+    .eq("id", gameId)
+    .eq("turn", opts.staleTurn)
+    .select();
+  if (error) {
+    console.warn("OnlineSink self-heal failed", error);
+    return false;
+  }
+  // .select() on an UPDATE returns the matched+updated rows; length>0 means
+  // our CAS matched (we repaired), 0 means the row was already fixed by someone
+  // else. Either way it's now consistent.
+  return Array.isArray(data) && data.length > 0;
+}
+
 export async function listWaitingGames(): Promise<OnlineGameMeta[]> {
   const sb = getSupabase();
   if (!sb) return [];
@@ -208,7 +284,46 @@ export async function sendOnlineMove(opts: {
   const { data: auth } = await sb.auth.getUser();
   const uid = auth?.user?.id;
   if (!uid) throw new Error("Anonymous sign-in not established");
-  // 1) Determine next move_index from the current moves list.
+
+  // Preferred path: the transactional `record_move` RPC (INSERT + UPDATE in one
+  // Postgres transaction) so a move is never inserted without its games-row turn
+  // flip — a dropped games UPDATE is the root cause of the online freeze.
+  // Feature-detected once per page-load: if the function isn't deployed yet,
+  // fall back to the REST INSERT+UPDATE-with-retry path below.
+  if (rpcAvailable !== false) {
+    const { data, error, status } = await sb.rpc("record_move", {
+      p_game_id: opts.gameId,
+      p_by_player_id: uid,
+      p_san: opts.san,
+      p_from: opts.from,
+      p_to: opts.to,
+      p_promotion: opts.promotion,
+      p_fen_after: opts.fenAfter,
+      p_pgn: opts.pgn,
+      p_turn: opts.turn,
+      p_status: opts.status,
+      p_white_time_remaining_ms: Math.max(0, Math.round(opts.whiteTimeMs)),
+      p_black_time_remaining_ms: Math.max(0, Math.round(opts.blackTimeMs)),
+      p_last_move_at: opts.lastMoveAtIso,
+    });
+    if (!error) {
+      rpcAvailable = true;
+      return Number(data ?? 0) || 0;
+    }
+    // 404 / "function does not exist" -> the SQL hasn't been applied to the
+    // live project yet; remember that and use the REST fallback.
+    if (isMissingRpcError(error, status)) {
+      rpcAvailable = false;
+    } else {
+      throw new Error("Move rejected by server: " + error.message);
+    }
+  }
+
+  // REST fallback (used until record_move is deployed). INSERT the move, then
+  // UPDATE the games row with a small retry: a transient blip on the games
+  // UPDATE leaves games.turn stale, which permanently freezes the opponent.
+  // Retrying the single-row UPDATE recovers it; OnlineSink.reconcile's CAS
+  // self-heal is the guaranteed recovery for any row that still ends up corrupt.
   const { data: last } = await sb.from("moves")
     .select("move_index")
     .eq("game_id", opts.gameId)
@@ -216,8 +331,6 @@ export async function sendOnlineMove(opts: {
     .limit(1)
     .maybeSingle();
   const nextIdx = (last?.move_index ?? 0) + 1;
-  // 2) Insert move. RLS `moves_insert_only_on_turn` + `is_my_turn()` is the
-  //    server-side gate that protects against out-of-turn inserts.
   const { data: insertedMove, error: moveErr } = await sb.from("moves").insert({
     game_id: opts.gameId,
     move_index: nextIdx,
@@ -229,19 +342,21 @@ export async function sendOnlineMove(opts: {
     by_player_id: uid,
   }).select("move_index").single();
   if (moveErr) throw new Error("Move rejected by RLS: " + moveErr.message);
-  // 3) Update game row: turn flips, clocks reflect post-increment values,
-  //    last_move_at anchors for client clock drift correction.
-  const { error: gameErr } = await sb.from("games").update({
-    fen: opts.fenAfter,
-    pgn: opts.pgn,
-    status: opts.status,
-    turn: opts.turn,
-    white_time_remaining_ms: Math.max(0, Math.round(opts.whiteTimeMs)),
-    black_time_remaining_ms: Math.max(0, Math.round(opts.blackTimeMs)),
-    last_move_at: opts.lastMoveAtIso,
-  }).eq("id", opts.gameId);
-  if (gameErr) throw new Error("Game update rejected by RLS: " + gameErr.message);
-  return insertedMove?.move_index ?? nextIdx;
+  let gameErr: { message: string } | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await sb.from("games").update({
+      fen: opts.fenAfter,
+      pgn: opts.pgn,
+      status: opts.status,
+      turn: opts.turn,
+      white_time_remaining_ms: Math.max(0, Math.round(opts.whiteTimeMs)),
+      black_time_remaining_ms: Math.max(0, Math.round(opts.blackTimeMs)),
+      last_move_at: opts.lastMoveAtIso,
+    }).eq("id", opts.gameId);
+    if (!error) return insertedMove?.move_index ?? nextIdx;
+    gameErr = error;
+  }
+  throw new Error("Game update rejected by RLS after retries: " + (gameErr?.message ?? "unknown"));
 }
 
 export async function resignOnlineGame(gameId: string): Promise<void> {
