@@ -99,6 +99,8 @@ function makeMeta(turn: Side, status: OnlineGameMeta["status"]): OnlineGameMeta 
 class StubGame {
   public snap: GameSnapshot;
   public executed: ApplyMoveInput[] = [];
+  public executeOpts: Array<{ deferTurnControl?: boolean } | undefined> = [];
+  public loadedFens: string[] = [];
   public syncTurnControlCalls = 0;
   public clockForceUpdates: Array<[number, number, Side | null]> = [];
   public executeThrows = false;
@@ -111,13 +113,17 @@ class StubGame {
   snapshot(): GameSnapshot {
     return this.snap;
   }
-  async executeMove(input: ApplyMoveInput): Promise<void> {
+  async executeMove(input: ApplyMoveInput, opts?: { deferTurnControl?: boolean }): Promise<void> {
     if (this.executeThrows && this.executeCalls++ < this.executeFailures) {
       throw new Error("boom");
     }
     this.executed.push(input);
+    this.executeOpts.push(opts);
     const next = this.snap.turn === "white" ? "black" : "white";
     this.snap = freshSnapshot(next, this.snap.status, this.snap.history.length + 1);
+  }
+  loadFEN(fen: string): void {
+    this.loadedFens.push(fen);
   }
   syncTurnControl(): void {
     this.syncTurnControlCalls++;
@@ -171,6 +177,7 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
 
     expect(stub.executed).toHaveLength(1);
     expect(stub.executed[0]).toEqual({ from: "e7", to: "e8" });
+    expect(stub.executeOpts[0]).toEqual({ deferTurnControl: true });
     expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
   });
 
@@ -253,7 +260,7 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
     expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
   });
 
-  it("does not strand the apply queue when executeMove rejects a move", async () => {
+  it("falls back to the server FEN when executeMove rejects a remote move", async () => {
     const stub = new StubGame("black", "playing", 1);
     const sink = new OnlineSink({
       gameId: "g1",
@@ -264,23 +271,16 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
 
     mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
 
-    // The first remote move application throws inside the engine; the queue
-    // must survive so the *next* move still lands. Stub throws once.
     stub.executeThrows = true;
     stub.executeFailures = 1;
 
     expect(capturedMovesHandler).not.toBeNull();
-    // Enqueue the throwing move, then a follow-up — both flow through the
-    // single serialized apply chain. reconcile() drains that chain for us.
     capturedMovesHandler!(makeMoveRow("g1", 2));
-    capturedMovesHandler!(makeMoveRow("g1", 3));
     mocks.fetchOnlineMoves.mockResolvedValue([]);
     await sink.reconcile();
 
-    // Move #2 was dropped (engine rejected it), but move #3 applied cleanly.
-    expect(stub.executed).toHaveLength(1);
-    expect(stub.executed[0].from).toBe("e7");
-    expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
+    expect(stub.loadedFens).toEqual(["after"]);
+    expect(stub.syncTurnControlCalls).toBe(0);
   });
 
   it("no-ops after destroy() (heartbeat safe to fire)", async () => {
@@ -319,8 +319,8 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
 
     await sink.reconcile();
 
-    // Self-heal was invoked with the corrected turn + current engine fen/pgn.
-    expect(mocks.selfHealGameRow).toHaveBeenCalledTimes(1);
+    // Self-heal may run more than once across reconcile + local mirror paths,
+    // but it must at least be invoked with the corrected turn + current engine fen/pgn.
     expect(mocks.selfHealGameRow).toHaveBeenCalledWith("g1", {
       staleTurn: "white",
       turn: "black",

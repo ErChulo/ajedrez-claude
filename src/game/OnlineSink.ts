@@ -101,7 +101,10 @@ export class OnlineSink implements MoveSink {
     const to = input.to;
     const promotion = input.promotion ?? null;
     // 1) Optimistic local apply: Game handles animation, clock, turn flip.
-    await game.executeMove(input);
+    // Use the same deferTurnControl path as remote applies so the board always
+    // gets an authoritative redraw after special moves (promotion / en passant)
+    // before online turn-control logic takes over.
+    await game.executeMove(input, { deferTurnControl: true });
     // 2) Snapshot post-move state and queue the write.
     const snap = game.snapshot();
     const last = snap.history.at(-1);
@@ -157,7 +160,14 @@ export class OnlineSink implements MoveSink {
       to: move.to_square as ApplyMoveInput["to"],
       ...(move.promotion ? { promotion: move.promotion } : {}),
     };
-    await this.gameRef.executeMove(input, { deferTurnControl: true });
+    try {
+      await this.gameRef.executeMove(input, { deferTurnControl: true });
+    } catch {
+      // If a remote move can't be replayed incrementally (e.g. local board/view
+      // drift during a special move), snap to the server-authoritative FEN from
+      // the moves row so the watcher never stays visually stale.
+      this.gameRef.loadFEN(move.fen_after);
+    }
     await this.waitForServerTurn(this.gameRef.snapshot().turn);
     this.syncTurnControlIfServerCaughtUp();
   }
