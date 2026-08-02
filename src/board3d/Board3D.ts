@@ -358,7 +358,18 @@ export class Board3D {
       // Mirror redraw(): bail if the view isn't mounted (e.g. mid-destroy or
       // before mount). Without this, `this.scene.remove/add` would crash if
       // something during teardown fires a stale move animation.
-      if (!this.scene) { this.resolvers.delete(resolve); return resolve(); }
+      //
+      // v1.19.1: keep boardSnap in sync even when the scene isn't ready yet.
+      // If the AI replies inside the 750 ms init window, the engine advances
+      // but this view can't animate — without syncing boardSnap here,
+      // rebuildPiecesFromSnapshot() at init time would paint a stale position.
+      // The move is applied to the snapshot so the rendered board matches
+      // the engine once the renderer is live.
+      if (!this.scene) {
+        this.applyMoveToSnapshot(rec, kind.kind);
+        this.resolvers.delete(resolve);
+        return resolve();
+      }
       const group = this.pieceMeshes.get(rec.from);
       if (!group) { this.resolvers.delete(resolve); return resolve(); }
       const isCapture = kind.kind === "capture" || kind.kind === "enpassant" || kind.kind === "promote";
@@ -418,7 +429,14 @@ export class Board3D {
   animateRookMove(from: Square, to: Square): Promise<void> {
     return new Promise((resolve) => {
       const mesh = this.pieceMeshes.get(from);
-      if (!mesh) return resolve();
+      if (!mesh) {
+        if (this.boardSnap.has(from)) {
+          const rook = this.boardSnap.get(from)!;
+          this.boardSnap.delete(from);
+          this.boardSnap.set(to, rook);
+        }
+        return resolve();
+      }
       this.pieceMeshes.delete(from);
       mesh.position.x = worldX(to);
       mesh.position.z = worldZ(to);
@@ -602,6 +620,25 @@ export class Board3D {
     const visualScale = this.pieceStyle === "asset-pack" ? 1 : PIECE_VISUAL_SCALE;
     group.scale.set(visualScale, visualScale, visualScale);
     return group;
+  }
+
+  private applyMoveToSnapshot(rec: MoveRecord, kind: MoveKind): void {
+    this.boardSnap.delete(rec.from);
+    const piece = rec.promotion ?? rec.piece;
+    this.boardSnap.set(rec.to, piece);
+    if (kind === "enpassant") {
+      const capturedSq = (rec.to[0] + rec.from[1]) as Square;
+      this.boardSnap.delete(capturedSq);
+    }
+    if (kind === "castle") {
+      const rookFrom = rec.to === "g1" ? "h1" : rec.to === "c1" ? "a1" : rec.to === "g8" ? "h8" : "a8";
+      const rookTo = rec.to === "g1" ? "f1" : rec.to === "c1" ? "d1" : rec.to === "g8" ? "f8" : "d8";
+      const rookPiece = this.boardSnap.get(rookFrom);
+      if (rookPiece) {
+        this.boardSnap.delete(rookFrom);
+        this.boardSnap.set(rookTo, rookPiece);
+      }
+    }
   }
 
   private rebuildPiecesFromSnapshot(): void {

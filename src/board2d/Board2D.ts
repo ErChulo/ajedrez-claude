@@ -410,7 +410,18 @@ export class Board2D {
     // picker is rendered on the destination square only.
     return new Promise((resolveOnce) => {
       let resolved = false;
-      const resolve = (v: Promotion | null) => { if (!resolved) { resolved = true; resolveOnce(v); } };
+      const resolve = (v: Promotion | null) => {
+        if (!resolved) {
+          resolved = true;
+          this.resolvers.delete(settle);
+          resolveOnce(v);
+        }
+      };
+      // v1.19.1: track the resolver so destroy() can settle it (resolve null)
+      // when the picker is torn down by a render-mode toggle — otherwise the
+      // await in Game.attemptMove hangs forever on a destroyed view.
+      const settle = () => resolve(null);
+      this.resolvers.add(settle);
 
       const hostSquare = this.squares.get(to);
       if (!hostSquare) return resolve(null);
