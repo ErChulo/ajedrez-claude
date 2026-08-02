@@ -1,0 +1,265 @@
+import type { GameSnapshot } from "@/types";
+import type { OnlineGameMeta, OnlineMoveRow } from "@/net/online";
+import type { ApplyMoveInput, MoveRecord, Side, Square } from "@/types";
+import type { Game } from "./Game";
+import { OnlineSink } from "./OnlineSink";
+import { vi, describe, it, expect, beforeEach } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  fetchOnlineMoves: vi.fn(),
+  fetchOnlineGame: vi.fn(),
+  subscribeGame: vi.fn(),
+  subscribeMoves: vi.fn(),
+  sendOnlineMove: vi.fn(),
+  resignOnlineGame: vi.fn(),
+}));
+
+vi.mock("@/net/online", () => ({
+  fetchOnlineMoves: (...args: unknown[]) => mocks.fetchOnlineMoves(...args),
+  fetchOnlineGame: (...args: unknown[]) => mocks.fetchOnlineGame(...args),
+  subscribeGame: (...args: unknown[]) => mocks.subscribeGame(...args),
+  subscribeMoves: (...args: unknown[]) => mocks.subscribeMoves(...args),
+  sendOnlineMove: (...args: unknown[]) => mocks.sendOnlineMove(...args),
+  resignOnlineGame: (...args: unknown[]) => mocks.resignOnlineGame(...args),
+}));
+
+function freshSnapshot(turn: Side, status: GameSnapshot["status"], historyLen: number): GameSnapshot {
+  const history: MoveRecord[] = Array.from({ length: historyLen }, (_, i) => ({
+    from: "e2" as Square,
+    to: "e4" as Square,
+    piece: "p" as MoveRecord["piece"],
+    san: "e4",
+    lan: "e2e4",
+    fen: "fen",
+    ply: i + 1,
+  }));
+  return {
+    fen: "start",
+    pgn: "",
+    turn,
+    history,
+    inCheck: false,
+    isCheckmate: false,
+    isStalemate: false,
+    isInsufficientMaterial: false,
+    isThreefoldRepetition: false,
+    is50MoveRule: false,
+    canWhiteCastleKingside: false,
+    canWhiteCastleQueenside: false,
+    canBlackCastleKingside: false,
+    canBlackCastleQueenside: false,
+    status,
+    winner: null,
+  };
+}
+
+function makeMoveRow(gameId: string, move_index: number, from = "e7", to = "e8"): OnlineMoveRow {
+  return {
+    id: move_index,
+    game_id: gameId,
+    move_index,
+    san: `${from}-${to}`,
+    from_square: from,
+    to_square: to,
+    promotion: null,
+    fen_after: "after",
+    by_player_id: "remote",
+    created_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+function makeMeta(turn: Side, status: OnlineGameMeta["status"]): OnlineGameMeta {
+  return {
+    id: "g1",
+    whitePlayerId: "w",
+    blackPlayerId: "b",
+    whiteDisplayName: "W",
+    blackDisplayName: "B",
+    status,
+    turn,
+    initialSeconds: 5,
+    incrementSeconds: 0,
+    whiteTimeRemainingMs: 5000,
+    blackTimeRemainingMs: 5000,
+    lastMoveAt: "2026-01-01T00:00:00Z",
+    joinCode: "AAAAAA",
+    fen: "start",
+    pgn: "",
+  };
+}
+
+class StubGame {
+  public snap: GameSnapshot;
+  public executed: ApplyMoveInput[] = [];
+  public syncTurnControlCalls = 0;
+  public clockForceUpdates: Array<[number, number, Side | null]> = [];
+  public executeThrows = false;
+  public executeFailures = 0;
+  private executeCalls = 0;
+
+  constructor(turn: Side, status: GameSnapshot["status"], historyLen: number) {
+    this.snap = freshSnapshot(turn, status, historyLen);
+  }
+  snapshot(): GameSnapshot {
+    return this.snap;
+  }
+  async executeMove(input: ApplyMoveInput): Promise<void> {
+    if (this.executeThrows && this.executeCalls++ < this.executeFailures) {
+      throw new Error("boom");
+    }
+    this.executed.push(input);
+    const next = this.snap.turn === "white" ? "black" : "white";
+    this.snap = freshSnapshot(next, this.snap.status, this.snap.history.length + 1);
+  }
+  syncTurnControl(): void {
+    this.syncTurnControlCalls++;
+  }
+  clockSnapshot() {
+    return { whiteMs: 5000, blackMs: 5000 };
+  }
+  get clock() {
+    return {
+      forceUpdate: (w: number, b: number, a: Side | null) => {
+        this.clockForceUpdates.push([w, b, a]);
+      },
+    };
+  }
+}
+
+describe("OnlineSink.reconcile (missed realtime recovery)", () => {
+  let capturedMovesHandler: ((m: OnlineMoveRow) => void) | null;
+
+  beforeEach(() => {
+    mocks.fetchOnlineMoves.mockReset();
+    mocks.fetchOnlineGame.mockReset();
+    mocks.sendOnlineMove.mockReset();
+    mocks.resignOnlineGame.mockReset();
+    capturedMovesHandler = null;
+    mocks.subscribeGame.mockImplementation((_id, _handler) => {
+      return { unsubscribe: vi.fn() };
+    });
+    mocks.subscribeMoves.mockImplementation((_id, handler) => {
+      capturedMovesHandler = handler;
+      return { unsubscribe: vi.fn() };
+    });
+  });
+
+  it("applies moves the realtime subscription missed and re-enables local control", async () => {
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"),
+    });
+    // After bind: lastSeenMoveIndex == history.length == 1; local turn is black.
+    sink.bind(stub as unknown as Game);
+
+    // Server has a remote move #2 that never arrived via realtime...
+    mocks.fetchOnlineMoves.mockResolvedValueOnce([makeMoveRow("g1", 2)]);
+    // ...and the game row reflects white to move (post move #2).
+    mocks.fetchOnlineGame.mockResolvedValueOnce(makeMeta("white", "active"));
+
+    await sink.reconcile();
+
+    expect(stub.executed).toHaveLength(1);
+    expect(stub.executed[0]).toEqual({ from: "e7", to: "e8" });
+    expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
+  });
+
+  it("does not double-apply when the same move is delivered again after reconcile", async () => {
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"),
+    });
+    sink.bind(stub as unknown as Game);
+
+    mocks.fetchOnlineMoves.mockResolvedValueOnce([makeMoveRow("g1", 2)]);
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
+
+    await sink.reconcile();
+    const afterFirst = stub.executed.length;
+
+    // A 2nd reconcile finds no new moves and does not re-apply.
+    mocks.fetchOnlineMoves.mockResolvedValueOnce([]);
+    await sink.reconcile();
+
+    expect(stub.executed).toHaveLength(afterFirst);
+  });
+
+  it("ignores realtime echoes of already-seen moves (dedupe across paths)", async () => {
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"),
+    });
+    sink.bind(stub as unknown as Game);
+
+    // Realtime delivers the missed move directly.
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
+
+    expect(capturedMovesHandler).not.toBeNull();
+    capturedMovesHandler!(makeMoveRow("g1", 2));
+    // Flush the apply chain via a reconcile (which awaits applyChain).
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    await sink.reconcile();
+
+    const afterRealtime = stub.executed.length;
+    expect(afterRealtime).toBe(1);
+
+    // Delivering the same move again is an echo → skipped.
+    capturedMovesHandler!(makeMoveRow("g1", 2));
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    await sink.reconcile();
+
+    expect(stub.executed).toHaveLength(afterRealtime);
+  });
+
+  it("does not strand the apply queue when executeMove rejects a move", async () => {
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"),
+    });
+    sink.bind(stub as unknown as Game);
+
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
+
+    // The first remote move application throws inside the engine; the queue
+    // must survive so the *next* move still lands. Stub throws once.
+    stub.executeThrows = true;
+    stub.executeFailures = 1;
+
+    expect(capturedMovesHandler).not.toBeNull();
+    // Enqueue the throwing move, then a follow-up — both flow through the
+    // single serialized apply chain. reconcile() drains that chain for us.
+    capturedMovesHandler!(makeMoveRow("g1", 2));
+    capturedMovesHandler!(makeMoveRow("g1", 3));
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    await sink.reconcile();
+
+    // Move #2 was dropped (engine rejected it), but move #3 applied cleanly.
+    expect(stub.executed).toHaveLength(1);
+    expect(stub.executed[0].from).toBe("e7");
+    expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
+  });
+
+  it("no-ops after destroy() (heartbeat safe to fire)", async () => {
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"),
+    });
+    sink.bind(stub as unknown as Game);
+    sink.destroy();
+
+    await sink.reconcile();
+
+    expect(mocks.fetchOnlineMoves).not.toHaveBeenCalled();
+    expect(mocks.fetchOnlineGame).not.toHaveBeenCalled();
+  });
+});

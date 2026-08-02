@@ -114,6 +114,31 @@ export async function joinOnlineGame(opts: {
   return rowToMeta(data);
 }
 
+export async function fetchOnlineMoves(
+  gameId: string,
+  afterMoveIndex: number,
+): Promise<OnlineMoveRow[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb.from("moves")
+    .select("*")
+    .eq("game_id", gameId)
+    .gt("move_index", afterMoveIndex)
+    .order("move_index", { ascending: true });
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    game_id: row.game_id,
+    move_index: Number(row.move_index),
+    san: row.san,
+    from_square: row.from_square,
+    to_square: row.to_square,
+    promotion: row.promotion as OnlineMoveRow["promotion"],
+    fen_after: row.fen_after,
+    by_player_id: row.by_player_id,
+    created_at: row.created_at,
+  }));
+}
+
 export async function fetchOnlineGame(gameId: string): Promise<OnlineGameMeta | null> {
   const sb = getSupabase();
   if (!sb) return null;
