@@ -56,6 +56,10 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
+      - name: Install Linux browser deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavif16
       - name: Install Playwright browser
         run: npx playwright install --with-deps ${{ matrix.browser.name }}
       - name: Build
