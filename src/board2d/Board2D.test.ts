@@ -31,6 +31,11 @@ const PROMO: MoveRecord = {
   san: "e8=Q", lan: "e7e8q", fen: "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", ply: 1,
 };
 
+const BLACK_PROMO: MoveRecord = {
+  from: "e2", to: "e1", piece: "P", promotion: "q",
+  san: "e1=Q", lan: "e2e1q", fen: "4k3/8/8/8/8/8/4p3/4K3 b - - 0 1", ply: 1,
+};
+
 describe("Board2D promotion (2D render bug)", () => {
   beforeEach(() => {
     sounds.setMuted(true);
@@ -55,7 +60,6 @@ describe("Board2D promotion (2D render bug)", () => {
     const b = mountBoard({ e7: "P" });
     await b.animateMove(PROMO, { kind: "promote" });
     await Promise.resolve();
-    // e8 queen present before the style swap.
     expect((b["squares"].get("e8")!.querySelector(".piece") as HTMLElement).dataset.piece).toBe("Q");
 
     b.setPieceStyle("bold");
@@ -66,5 +70,19 @@ describe("Board2D promotion (2D render bug)", () => {
     expect(piece8!.dataset.piece).toBe("Q");
     const e7 = b["squares"].get("e7")!;
     expect(e7.querySelector(".piece")).toBeNull();
+  });
+
+  it("renders a black promotion as the promoted black piece", async () => {
+    const b = mountBoard({ e2: "p" });
+    await b.animateMove(BLACK_PROMO, { kind: "promote" });
+    await Promise.resolve();
+
+    const e1 = b["squares"].get("e1")!;
+    const e2 = b["squares"].get("e2")!;
+    const piece1 = e1.querySelector(".piece") as HTMLElement | null;
+    expect(piece1).not.toBeNull();
+    expect(piece1!.dataset.piece).toBe("q");
+    expect(piece1!.innerHTML).toContain("b_Queen");
+    expect(e2.querySelector(".piece")).toBeNull();
   });
 });

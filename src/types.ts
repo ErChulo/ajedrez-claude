@@ -13,8 +13,8 @@ export type Color = "w" | "b";           // chess.js internal convention
 export type Side = "white" | "black";    // UI-facing convention
 export type PieceKind = "p" | "n" | "b" | "r" | "q" | "k";
 
-export type PieceSymbol = "P" | "N" | "B" | "R" | "Q" | "K"; // uppercase = white
-export type PieceGlyph   = "P" | "N" | "B" | "R" | "Q" | "K" | "p" | "n" | "b" | "r" | "q" | "k";
+export type PieceSymbol = "P" | "N" | "B" | "R" | "Q" | "K" | "p" | "n" | "b" | "r" | "q" | "k"; // uppercase = white, lowercase = black
+export type PieceGlyph = PieceSymbol;
 
 export type Promotion = "q" | "r" | "b" | "n";
 export type PlayerId = "white" | "black" | "spectator";
