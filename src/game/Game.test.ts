@@ -169,4 +169,42 @@ describe("Game online sink behavior", () => {
     expect(execSpy).toHaveBeenCalledTimes(1);
     game.shutdown();
   });
+
+  it("animates a promotion with kind 'promote' carrying the chosen promotion piece", async () => {
+    // Regression for the observer-side promotion render: a promote move must
+    // reach View.animateMove with kind 'promote' AND rec.promotion set to the
+    // chosen piece, so both Board2D and Board3D paint the new piece (not a
+    // lingering pawn). The online row's `promotion` is forwarded by
+    // OnlineSink.applyMoveRow into executeMove; this test pins that contract
+    // at the Game layer independent of any network/Supabase plumbing.
+    const recorded: { rec: MoveRecord; kind: string }[] = [];
+    const view = new FakeView();
+    (view as any).animateMove = (_rec: MoveRecord, animate: { kind: string }) => {
+      recorded.push({ rec: _rec, kind: animate.kind });
+      return Promise.resolve();
+    };
+    (view as any).awaitPromotion = () => Promise.resolve("n" as Promotion);
+
+    const game = new Game(view, {
+      humanSide: "white",
+      aiDifficulty: "intermediate",
+      ai: new CountingAI(),
+      initialSeconds: 60,
+      incrementSeconds: 0,
+    });
+    // White pawn on e7, ready to promote on e8 (empty).
+    game.loadFEN("8/4P3/8/8/8/8/8/4K1k1 w - - 0 1");
+    game.start();
+    void game.attemptMove({ from: "e7", to: "e8" });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].kind).toBe("promote");
+    expect(recorded[0].rec.promotion).toBe("N");
+    expect(recorded[0].rec.from).toBe("e7");
+    expect(recorded[0].rec.to).toBe("e8");
+    game.shutdown();
+  });
 });

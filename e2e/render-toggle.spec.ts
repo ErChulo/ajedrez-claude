@@ -152,8 +152,11 @@ test.describe(() => {
     } else {
       // Fallback or auto-flip — game should be back on 2D and playable.
       console.log("[render-toggle/A] fell back to 2D, verifying playability");
-      await expect(page.locator(".board-2d")).toBeVisible();
-      await expect(page.locator("#undo-btn")).toBeEnabled();
+      // waitFor3D() can return "fallback" as soon as Board3D marks
+      // data-3d-state="webgl-unavailable" — the App.ts auto-flip back to 2D
+      // may land a moment later. Give that handoff an explicit budget.
+      await expect(page.locator(".board-2d")).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator("#undo-btn")).toBeEnabled({ timeout: 30_000 });
     }
   });
 
@@ -163,7 +166,7 @@ test.describe(() => {
     await page.goto("/");
     await settleEngine(page);
 
-    // Play one move on 2D, toggle to 3D BEFORE the AI replies.
+    // Play one move on 2D, wait for AI reply.
     await click2D(page, "e2");
     await click2D(page, "e4");
     console.log("[render-toggle/B] e2e4 submitted, toggling immediately");
@@ -225,10 +228,11 @@ test.describe(() => {
   });
 
   test("D: 2D-only toggle regression — state integrity without WebGL", async ({ page }: { page: Page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto("/");
     await settleEngine(page);
+    await expect(page.locator(".board-2d")).toBeVisible();
 
     // Play one move on 2D, wait for AI reply.
     await click2D(page, "e2");

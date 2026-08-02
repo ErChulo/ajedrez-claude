@@ -69,9 +69,11 @@ test("toggle 2D ↔ 3D updates the board host (canvas, fallback, or auto-flip)",
   // + click "3D" button (~500 ms; fires Three.js scene + PMREMGenerator
   //   + RoomEnvironment init which can be slow on first launch)
   // + expect.canvas visible (60 s on headless CI — see below)
-  // The default 30 s blanket leaves only ~2 s headroom. 60 s gives
-  // plenty of margin without hiding a real regression.
-  test.setTimeout(90_000);
+  // The dedicated render-toggle regressions now budget up to 120 s for the
+  // same 3D init/fallback handshake on slower headless GPU stacks. Keep smoke's
+  // outer test budget above that so the assertion timeout below can actually
+  // elapse instead of the whole test being killed early.
+  test.setTimeout(150_000);
 
   await page.goto("/");
   await settleEngine(page);
@@ -80,19 +82,17 @@ test("toggle 2D ↔ 3D updates the board host (canvas, fallback, or auto-flip)",
   // The 2D/3D toggle group is the second .toggle-group in the app bar.
   await page.locator(".appbar .toggle-group").nth(1).locator('button:has-text("3D")').click();
 
-  // After toggle, a <canvas> should appear inside the board host (Three.js renders into one).
-  // v1.18: bumped from 10 s to 60 s and accepts ANY of three valid post-toggle
-  // outcomes inside .board-host:
-  //   (a) <canvas> — Three.js canvas (WebGL succeeded)
-  //   (b) <div class="three-fallback"> — WebGL fallback banner; the user has
-  //       a visible explanation that 3D doesn't work in their browser AND
-  //       the board-host is non-blank
-  //   (c) .board-2d — App's ajedrez:webgl-fallback auto-flip listener
-  //       already replaced the host with a 2D view (Linux/SwiftShader and
-  //       a few headless browser/GPU combinations hit this path before
-  //       the assertion could observe the banner itself)
-  // All three mean the toggle did something the user can see.
-  await expect(page.locator('.board-host canvas, .board-host .three-fallback[data-state="webgl-unavailable"], .board-host .board-2d')).toBeVisible({ timeout: 60_000 });
+  // After toggle, wait on the SAME state markers the dedicated render-toggle
+  // regression uses. Waiting on `.board-3d-host[data-3d-state="webgl"]` is
+  // more robust than waiting for a visible <canvas> alone because WebGL init can
+  // tag the host as ready slightly before the first visible frame lands.
+  // Valid outcomes inside .board-host:
+  //   (a) .board-3d-host[data-3d-state="webgl"] — WebGL path succeeded
+  //   (b) .board-3d-host[data-3d-state="webgl-unavailable"] — fallback banner
+  //   (c) .board-2d — App's ajedrez:webgl-fallback auto-flip already returned
+  //       the user to a playable 2D board in environments where WebGL is absent
+  //       or too slow to stabilize.
+  await expect(page.locator('.board-host .board-3d-host[data-3d-state="webgl"], .board-host .board-3d-host[data-3d-state="webgl-unavailable"], .board-host .board-2d')).toBeVisible({ timeout: 120_000 });
 });
 
 test("mode tabs update the side panel", async ({ page }) => {

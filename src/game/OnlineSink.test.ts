@@ -55,7 +55,13 @@ function freshSnapshot(turn: Side, status: GameSnapshot["status"], historyLen: n
   };
 }
 
-function makeMoveRow(gameId: string, move_index: number, from = "e7", to = "e8"): OnlineMoveRow {
+function makeMoveRow(
+  gameId: string,
+  move_index: number,
+  from = "e7",
+  to = "e8",
+  promotion: OnlineMoveRow["promotion"] = null,
+): OnlineMoveRow {
   return {
     id: move_index,
     game_id: gameId,
@@ -63,7 +69,7 @@ function makeMoveRow(gameId: string, move_index: number, from = "e7", to = "e8")
     san: `${from}-${to}`,
     from_square: from,
     to_square: to,
-    promotion: null,
+    promotion,
     fen_after: "after",
     by_player_id: "remote",
     created_at: "2026-01-01T00:00:00Z",
@@ -217,6 +223,34 @@ describe("OnlineSink.reconcile (missed realtime recovery)", () => {
     await sink.reconcile();
 
     expect(stub.executed).toHaveLength(afterRealtime);
+  });
+
+  it("preserves the promoted piece on the observer's board (Bug: opponent saw pawn)", async () => {
+    // Regression: a remote promotion must reach executeMove with the chosen
+    // promotion (e.g. 'r', not defaulted to 'q') so the observer's view renders
+    // the pawn->rook transform with kind 'promote'. The watcher's OnlineMoveRow
+    // carries promotion='r' from record_move's p_promotion column.
+    const stub = new StubGame("black", "playing", 1);
+    const sink = new OnlineSink({
+      gameId: "g1",
+      seated: "black",
+      initialMeta: makeMeta("white", "active"), // serverTurn=white, stub.local=black
+    });
+    sink.bind(stub as unknown as Game);
+    mocks.fetchOnlineGame.mockResolvedValue(makeMeta("white", "active"));
+
+    expect(capturedMovesHandler).not.toBeNull();
+    // Mover (white) promoted e7e8, choosing a rook.
+    capturedMovesHandler!(makeMoveRow("g1", 2, "e7", "e8", "r"));
+    // Drain the serialized apply queue so executeMove has run.
+    mocks.fetchOnlineMoves.mockResolvedValue([]);
+    await sink.reconcile();
+
+    expect(stub.executed).toHaveLength(1);
+    expect(stub.executed[0]).toEqual({ from: "e7", to: "e8", promotion: "r" });
+    // Local turn should have flipped to white (server caught up) so the
+    // opponent is never frozen after a promotion.
+    expect(stub.syncTurnControlCalls).toBeGreaterThan(0);
   });
 
   it("does not strand the apply queue when executeMove rejects a move", async () => {

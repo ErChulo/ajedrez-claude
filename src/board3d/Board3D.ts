@@ -17,8 +17,10 @@ import gsap from "gsap";
 import { setupLighting, setupRenderer } from "./lighting";
 import { buildPieceMaterial, buildBoardMaterial } from "./materials";
 import { buildPieceGeometry, prefetchPieceStyleAssets } from "./piece-styles";
+import { renderPieceSvg } from "@/board2d/piece-styles";
 import { DEFAULT_PIECE_STYLE, PIECE_STYLE_IDS, type PieceStyleId } from "@/types";
-import type { ApplyMoveInput, MoveRecord, PieceSymbol, Side, Square, ThemeData } from "@/types";
+import { sounds } from "@/audio/sounds";
+import type { ApplyMoveInput, MoveRecord, PieceSymbol, Promotion, Side, Square, ThemeData } from "@/types";
 
 const BOARD = { size: 4.0, squareSize: 0.5, height: 0.1, baseY: 0 };
 // v1.15: visual scale-up applied to every piece group (after geometry
@@ -51,6 +53,17 @@ function worldX(sq: Square): number { return (fileIndex(sq) - 3.5) * BOARD.squar
 function worldZ(sq: Square): number { return (rankIndex(sq) - 3.5) * BOARD.squareSize; }
 function pieceSymbolIsWhite(s: PieceSymbol): boolean { return s === s.toUpperCase(); }
 function toPieceKind(s: PieceSymbol): PieceKind { return s.toLowerCase() as PieceKind; }
+
+// v1.19.2: honor the OS reduced-motion preference (mirrors src/anim/tween.ts).
+// When set, all 3D piece tweens collapse to a near-instant snap so users who
+// disabled motion aren't subjected to multi-frame animation.
+function reduced(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+// Durations kept in sync with src/anim/tween.ts DURATION constants so 2D and 3D
+// share one visual language.
+const DURATION = { move: 0.22, capture: 0.28, castle: 0.32, promote: 0.5, illegal: 0.08 };
+function dur(normal: number): number { return reduced() ? 0.05 : normal; }
 
 export class Board3D {
   private host: HTMLElement;
@@ -355,95 +368,187 @@ export class Board3D {
       // firing onComplete → resolve never runs → Game.executeMove's
       // finally block never clears isProcessingMove, wedging the game).
       this.resolvers.add(resolve);
-      // Mirror redraw(): bail if the view isn't mounted (e.g. mid-destroy or
-      // before mount). Without this, `this.scene.remove/add` would crash if
-      // something during teardown fires a stale move animation.
-      //
-      // v1.19.1: keep boardSnap in sync even when the scene isn't ready yet.
-      // If the AI replies inside the 750 ms init window, the engine advances
-      // but this view can't animate — without syncing boardSnap here,
-      // rebuildPiecesFromSnapshot() at init time would paint a stale position.
-      // The move is applied to the snapshot so the rendered board matches
-      // the engine once the renderer is live.
+      this.animateMoveSeq(rec, kind, resolve).catch(() => {
+        // Safety: any unexpected rejection must still release the
+        // isProcessingMove gate so the game never locks up.
+        this.resolvers.delete(resolve);
+        resolve();
+      });
+    });
+  }
+
+  // v1.19.2: tweened, sound-backed move animation. Mirrors Board2D.animateMove's
+  // visual language: capture fade → slide → promotion pop, with the same
+  // SoundBus events (capture/move/castle/promote). Resolves only when the
+  // whole chain finishes so Game.executeMove's await blocks until the board is
+  // visually settled (no mid-tween piece clicks / double-fires).
+  private async animateMoveSeq(rec: MoveRecord, kind: { kind: MoveKind }, done: () => void): Promise<void> {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      this.resolvers.delete(done);
+      done();
+    };
+    try {
+      // Pre-mount / mid-teardown: nothing to animate — just keep boardSnap honest.
       if (!this.scene) {
         this.applyMoveToSnapshot(rec, kind.kind);
-        this.resolvers.delete(resolve);
-        return resolve();
+        return finish();
       }
       const group = this.pieceMeshes.get(rec.from);
-      if (!group) { this.resolvers.delete(resolve); return resolve(); }
-      const isCapture = kind.kind === "capture" || kind.kind === "enpassant" || kind.kind === "promote";
+      if (!group) return finish();
+
+      const k = kind.kind;
+      const isCapture = k === "capture" || k === "enpassant" || k === "promote";
+      let captured: THREE.Group | undefined;
       if (isCapture) {
-        const capturedSq =
-          kind.kind === "enpassant"
-            ? (rec.to[0] + rec.from[1]) as Square
-            : rec.to;
-        const captured = this.pieceMeshes.get(capturedSq);
-        if (captured) {
-          this.disposePieceGroup(captured);
-          this.pieceMeshes.delete(capturedSq);
-        }
+        const capturedSq = k === "enpassant" ? (rec.to[0] + rec.from[1]) as Square : rec.to;
+        captured = this.pieceMeshes.get(capturedSq);
       }
-      group.position.x = worldX(rec.to);
-      group.position.z = worldZ(rec.to);
-      (group.userData as { square: Square }).square = rec.to; // v1.13: keep raycast data current after a move.
+
+      // 1) Capture tween: shrink the captured piece out, then dispose it.
+      if (captured) {
+        await this.tweenCaptureOut(captured);
+        sounds.play("capture");
+      }
+
+      // 2) Slide the mover from -> to.
+      await this.tweenSlide(group, worldX(rec.from), worldZ(rec.from), worldX(rec.to), worldZ(rec.to), k === "castle" ? "castle" : "move");
+
+      // Logical bookkeeping (mirrors Board2D.applyMoveToSnapshot, but deferred to
+      // onComplete so the piece is "home" visually before the map moves it).
       this.pieceMeshes.delete(rec.from);
+      (group.userData as { square: Square }).square = rec.to;
       this.pieceMeshes.set(rec.to, group);
-      if (kind.kind === "promote") {
-        const replacement = this.makePieceMesh(rec.promotion ?? rec.piece);
-        (replacement.userData as { square: Square }).square = rec.to;
-        replacement.position.set(worldX(rec.to), BOARD.baseY + BOARD.height, worldZ(rec.to));
-        const visualScale = this.pieceStyle === "asset-pack" ? 1 : PIECE_VISUAL_SCALE;
-        // v1.15: scale-up baseline matches PIECE_VISUAL_SCALE so the
-        // promotion grow-in lands at the same final visual size as
-        // every other piece (otherwise it would visibly undershoot).
-        replacement.scale.set(0.001 * visualScale, 0.001 * visualScale, 0.001 * visualScale);
-        this.scene.remove(group);
-        this.scene.add(replacement);
-        this.pieceMeshes.set(rec.to, replacement);
-        this.updateFootprintMetric();
-        // AWAIT the promotion grow-in. Previously fire-and-forget, which
-        // let Game.executeMove return while the new piece was still at
-        // scale ~0.001 — a fast follow-up click could collide. Resolve
-        // inside the tween's onComplete so Game waits for the grow.
-        gsap.to(replacement.scale, {
-          x: visualScale,
-          y: visualScale,
-          z: visualScale,
-          duration: 0.5,
-          ease: "back.out(2)",
-          onComplete: () => {
-            this.resolvers.delete(resolve);
-            this.updateFootprintMetric();
-            resolve();
-          },
-        });
-      } else {
-        this.resolvers.delete(resolve);
-        this.updateFootprintMetric();
-        resolve();
+      this.applyMoveToSnapshot(rec, k);
+      this.updateFootprintMetric();
+
+      // 3) Promotion pop: swap the pawn for the promoted piece + grow-in.
+      if (k === "promote") {
+        await this.tweenPromote(rec, group);
+        sounds.play("promote");
       }
-    });
+      finish();
+    } catch {
+      finish();
+    }
   }
 
   animateRookMove(from: Square, to: Square): Promise<void> {
     return new Promise((resolve) => {
-      const mesh = this.pieceMeshes.get(from);
-      if (!mesh) {
-        if (this.boardSnap.has(from)) {
-          const rook = this.boardSnap.get(from)!;
-          this.boardSnap.delete(from);
-          this.boardSnap.set(to, rook);
-        }
-        return resolve();
-      }
-      this.pieceMeshes.delete(from);
-      mesh.position.x = worldX(to);
-      mesh.position.z = worldZ(to);
-      this.pieceMeshes.set(to, mesh);
-      this.updateFootprintMetric();
-      resolve();
+      this.resolvers.add(resolve);
+      this.tweenRookSlide(from, to, resolve).catch(() => {
+        this.resolvers.delete(resolve);
+        resolve();
+      });
     });
+  }
+
+  // ---- tween helpers (3D equivalents of src/anim/tween.ts) ----
+  //
+  // These tween the THREE objects directly (the tween.ts helpers target
+  // HTMLElement transform/style, so they're unusable for a WebGL scene).
+  // Durations mirror DURATION above for a single cross-renderer feel, and
+  // `dur()` collapses them for prefers-reduced-motion.
+
+  private tweenCaptureOut(group: THREE.Group): Promise<void> {
+    if (reduced()) { this.disposePieceGroup(group); return Promise.resolve(); }
+    return new Promise((resolve) => {
+      gsap.to(group.scale, {
+        x: 0, y: 0, z: 0,
+        duration: dur(DURATION.capture),
+        ease: "power2.in",
+        onComplete: () => {
+          this.disposePieceGroup(group);
+          resolve();
+        },
+      });
+    });
+  }
+
+  private tweenSlide(group: THREE.Group, x0: number, z0: number, x1: number, z1: number, sound: "move" | "castle"): Promise<void> {
+    // Position the group at the origin square first, then tween to the target.
+    group.position.x = x0;
+    group.position.z = z0;
+    return new Promise((resolve) => {
+      gsap.to(group.position, {
+        x: x1,
+        z: z1,
+        duration: dur(DURATION.move),
+        ease: "power2.out",
+        onComplete: () => {
+          if (sound === "castle") sounds.play("castle");
+          else sounds.play("move");
+          resolve();
+        },
+      });
+    });
+  }
+
+  private tweenPromote(rec: MoveRecord, pawn: THREE.Group): Promise<void> {
+    return new Promise((resolve) => {
+      const replacement = this.makePieceMesh(rec.promotion ?? rec.piece);
+      (replacement.userData as { square: Square }).square = rec.to;
+      replacement.position.set(worldX(rec.to), BOARD.baseY + BOARD.height, worldZ(rec.to));
+      const visualScale = this.pieceStyle === "asset-pack" ? 1 : PIECE_VISUAL_SCALE;
+      // v1.15: scale-up baseline matches PIECE_VISUAL_SCALE so the
+      // promotion grow-in lands at the same final visual size as
+      // every other piece (otherwise it would visibly undershoot).
+      replacement.scale.set(0.001 * visualScale, 0.001 * visualScale, 0.001 * visualScale);
+      this.scene!.remove(pawn);
+      this.pieceMeshes.set(rec.to, replacement);
+      this.scene!.add(replacement);
+      this.updateFootprintMetric();
+      gsap.to(replacement.scale, {
+        x: visualScale,
+        y: visualScale,
+        z: visualScale,
+        duration: dur(DURATION.promote),
+        ease: "back.out(2)",
+        onComplete: () => {
+          this.updateFootprintMetric();
+          resolve();
+        },
+      });
+    });
+  }
+
+  private tweenRookSlide(from: Square, to: Square, done: () => void): Promise<void> {
+    if (!this.scene) { this.resolvers.delete(done); return Promise.resolve(done()); }
+    const mesh = this.pieceMeshes.get(from);
+    if (!mesh) {
+      this.resolvers.delete(done);
+      // No live mesh (e.g. a re-render cleared it) — still keep the logical
+      // snapshot in sync so a later setPieceStyle() rebuild is correct.
+      this.applyRookToSnapshot(from, to);
+      return Promise.resolve(done());
+    }
+    this.applyRookToSnapshot(from, to);
+    this.pieceMeshes.delete(from);
+    return new Promise((resolve) => {
+      gsap.to(mesh.position, {
+        x: worldX(to),
+        z: worldZ(to),
+        duration: dur(DURATION.move),
+        ease: "power2.out",
+        onComplete: () => {
+          (mesh.userData as { square: Square }).square = to;
+          this.pieceMeshes.set(to, mesh);
+          this.resolvers.delete(done);
+          this.updateFootprintMetric();
+          resolve();
+        },
+      });
+    });
+  }
+
+  private applyRookToSnapshot(from: Square, to: Square): void {
+    const rook = this.boardSnap.get(from);
+    if (rook) {
+      this.boardSnap.delete(from);
+      this.boardSnap.set(to, rook);
+    }
   }
 
   setSelectable(side: Side | null): void {
@@ -523,14 +628,89 @@ export class Board3D {
       this.hintTimer = null;
     }, 2500);
   }
-  awaitPromotion(from: Square, to: Square): Promise<"q" | "r" | "b" | "n" | null> {
-    void from; void to;
-    return Promise.resolve("q"); // 3D-mode auto-promotes until a 3D picker is built
+  awaitPromotion(from: Square, to: Square): Promise<Promotion | null> {
+    // v1.19.2: real picker for 3D mode (previously auto-queened to "q").
+    // The 3D scene has no per-square DOM, so the picker is a DOM overlay
+    // centered on the canvas — reusing the global .promo-picker/.promo-btn
+    // CSS (already shared with Board2D) and 2D SVG pieces from renderPieceSvg
+    // so the promoted piece matches the rest of the game's look.
+    return new Promise((resolveOnce) => {
+      let settled = false;
+      const settle = (v: Promotion | null) => {
+        if (settled) return;
+        settled = true;
+        this.resolvers.delete(cleanup);
+        resolveOnce(v);
+      };
+      // Track the settle fn in `this.resolvers` so destroy() (e.g. a 2D↔3D
+      // toggle while the picker is open) flushes the Game.attemptMove await
+      // with a null instead of leaving it hung.
+      const cleanup = () => settle(null);
+      this.resolvers.add(cleanup);
+
+      const hostSquare = to;
+      void hostSquare;
+      // Derive the promoting side's color from the live pawn (mirrors Board2D's
+      // fix — `selectable` is null here because attemptMove clears it).
+      const pawnSym = this.pieceMeshes.get(from)?.userData.symbol as PieceSymbol | undefined;
+      const sym = pawnSym ?? "P";
+      const inPlaceOf: "white" | "black" = sym === sym.toUpperCase() ? "white" : "black";
+
+      const picker = document.createElement("div");
+      picker.className = "promo-picker";
+      // Centered over the 3D canvas (the host is the board-3d-host).
+      picker.style.position = "absolute";
+      picker.style.inset = "0";
+      picker.style.margin = "auto";
+      picker.style.width = "256px";
+      picker.style.background = "rgba(0,0,0,0.75)";
+      picker.style.borderRadius = "8px";
+      picker.style.padding = "10px";
+
+      const options: Promotion[] = ["q", "r", "b", "n"];
+      const symFor: Record<Promotion, PieceSymbol> = { q: "Q", r: "R", b: "B", n: "N" };
+      options.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.className = "promo-btn";
+        btn.innerHTML = renderPieceSvg(inPlaceOf === "white" ? symFor[p] : (symFor[p].toLowerCase() as PieceSymbol), this.pieceStyle);
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          picker.remove();
+          settle(p);
+        });
+        picker.appendChild(btn);
+      });
+      const cancel = document.createElement("button");
+      cancel.className = "promo-btn ghost";
+      cancel.textContent = "×";
+      cancel.addEventListener("click", (e) => {
+        e.stopPropagation();
+        picker.remove();
+        settle(null);
+      });
+      picker.appendChild(cancel);
+
+      // Click outside the picker cancels it.
+      const onDocClick = (e: MouseEvent) => {
+        if (!picker.isConnected) return;
+        if (!(e.target as Node | null)?.isSameNode(picker)) {
+          if (!picker.contains(e.target as Node)) {
+            document.removeEventListener("click", onDocClick);
+            picker.remove();
+            settle(null);
+          }
+        }
+      };
+      setTimeout(() => document.addEventListener("click", onDocClick), 0);
+
+      this.host.appendChild(picker);
+    });
   }
   flashIllegal(sq: Square): void {
     const sqMesh = this.squares.get(sq);
     if (!sqMesh) return;
     gsap.fromTo(sqMesh.scale, { x: 1, z: 1 }, { x: 1.06, z: 1.06, duration: 0.08, yoyo: true, repeat: 3 });
+    sounds.play("illegal");
   }
 
   applyTheme(theme: ThemeData): void {
